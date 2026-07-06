@@ -1,0 +1,128 @@
+// Prisma schema for the Activant YC Scout.
+//
+// Design notes (see docs/ARCHITECTURE.md for the full write-up):
+// - `Batch` and `Company` are populated by the ingestion pipeline (Phase 1,
+//   src/lib/yc/*). They hold only facts sourced from YC — nothing scored.
+// - `CompanyScore` is populated by the scoring pipeline (Phase 2). It is
+//   deliberately a separate model from `Company` so re-scoring (e.g. after
+//   a thesis update) never touches the underlying evidence, and so a
+//   company can be re-scored against a new `ThesisVersion` without losing
+//   the history of how it scored against the old one.
+// - `primaryCategory` is a single value (not a list) because the product
+//   requirement is "decide one bucket, don't double-list" — see
+//   docs/ARCHITECTURE.md#categorization.
+
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Batch {
+  /// yc-oss slug, e.g. "summer-2026" — see docs/DATA_SOURCES.md
+  id           String    @id
+  displayName  String    // "Summer 2026"
+  companyCount Int?      // last known count from the mirror, for drift checks
+  firstSyncedAt DateTime @default(now())
+  lastSyncedAt  DateTime @default(now())
+  companies    Company[]
+}
+
+model Company {
+  id                String    @id @default(cuid())
+  ycId              Int?      @unique
+  slug              String    @unique
+  name              String
+  oneLiner          String
+  longDescription   String
+  website           String?
+  websiteAccessible Boolean?  // null = not checked yet (e.g. triage-only pass)
+  websiteCheckNote  String?   // e.g. "timed out after 10s — scored from YC page only"
+  ycUrl             String
+  status            String
+  teamSize          Int?
+  industries        String[]
+  tags              String[]
+  regions           String[]
+  launchedAt        DateTime?
+  founderExtractionNote String? // set when founder-page parsing failed/degraded
+
+  batchId  String
+  batch    Batch    @relation(fields: [batchId], references: [id])
+  founders Founder[]
+  score    CompanyScore?
+
+  ingestedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([batchId])
+}
+
+model Founder {
+  id            String   @id @default(cuid())
+  companyId     String
+  company       Company  @relation(fields: [companyId], references: [id])
+  name          String
+  title         String?
+  bio           String?
+  linkedinUrl   String?
+  twitterUrl    String?
+  extraResearch String?  // supplementary notes from the deep-dive web-search pass
+
+  @@index([companyId])
+}
+
+/// One row per company, holding the latest score. Re-scoring overwrites
+/// rather than appends — history lives in ThesisVersion + scoredAt if we
+/// ever need to reconstruct "how did this look under the old thesis".
+model CompanyScore {
+  id        String  @id @default(cuid())
+  companyId String  @unique
+  company   Company @relation(fields: [companyId], references: [id])
+
+  pass ScorePass // triage | deep_dive
+
+  teamGeneralScore Float? // Criteria 1 composite, 0-10
+  thesisAlignScore Float? // Criteria 2 composite, 0-10
+
+  primaryCategory Category? // null = below the bar for both
+  secondaryTag    Boolean   @default(false) // strong on the *other* axis too, noted not double-listed
+
+  /// Full per-dimension breakdown + rationale, e.g.
+  /// { "team_general": [{ "dimension": "founder_market_fit", "score": 8, "rationale": "..." }, ...],
+  ///   "thesis_fit":   [{ "dimension": "sector_alignment",   "score": 6, "rationale": "..." }, ...] }
+  rubricBreakdown Json
+  summary         String?
+
+  thesisVersionId String?
+  thesisVersion   ThesisVersion? @relation(fields: [thesisVersionId], references: [id])
+
+  scoredAt DateTime @default(now())
+}
+
+enum ScorePass {
+  triage
+  deep_dive
+}
+
+enum Category {
+  team_general
+  thesis_fit
+}
+
+/// A snapshot of Activant's research thesis at the time a batch of
+/// companies was scored, so "why was this scored this way" stays
+/// answerable even after the thesis moves on. Populated in Phase 2 by
+/// src/lib/thesis/*.
+model ThesisVersion {
+  id         String   @id @default(cuid())
+  source     String   // "activant_research_mcp" | "manual"
+  summary    String
+  rawContent Json?
+  fetchedAt  DateTime @default(now())
+  scores     CompanyScore[]
+}

@@ -1,0 +1,9 @@
+node_modules/
+.next/
+.env
+*.local
+dist/
+coverage/
+.DS_Store
+next-env.d.ts
+tsconfig.tsbuildinfo
