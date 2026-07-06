@@ -46,14 +46,22 @@ async function main() {
         case "scored":
           console.log(event.deepDived ? "scored (deep-dive)" : "scored (triage)");
           break;
+        case "failed":
+          console.log(`FAILED — ${event.error}`);
+          break;
         case "done":
-          console.log(`\nDone — ${event.count} companies persisted.`);
+          console.log(`\nDone — ${event.count} companies attempted, ${event.failed} failed.`);
           break;
       }
     },
   });
 
-  console.log(`\n${result.processed} companies processed and written to the database.`);
+  console.log(`\n${result.processed} companies scored and written to the database.`);
+  if (result.failed > 0) {
+    console.log(`${result.failed} company/companies failed to score and were skipped:`);
+    for (const name of result.failedCompanies) console.log(`  - ${name}`);
+    console.log("\nRe-run the same command — already-scored companies will just be re-scored (harmless, upsert-based); the failed ones get another attempt.");
+  }
 }
 
 main().catch((err) => {

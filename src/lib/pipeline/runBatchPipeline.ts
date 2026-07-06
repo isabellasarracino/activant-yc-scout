@@ -7,9 +7,7 @@ import type { ThesisSnapshot } from "../thesis/types";
 import type { NormalizedCompany } from "../yc/types";
 
 export interface PipelineOptions {
-  /** Either score qualifies at/above this on triage, the company gets a deep-dive pass. */
   deepDiveBar?: number;
-  /** Cap how many companies get processed — for a cheap smoke test on a big batch. */
   limit?: number;
   onProgress?: (event: PipelineProgressEvent) => void;
 }
@@ -19,21 +17,15 @@ export type PipelineProgressEvent =
   | { type: "ingested"; count: number }
   | { type: "scoring"; company: string; index: number; total: number }
   | { type: "scored"; company: string; deepDived: boolean }
-  | { type: "done"; count: number };
+  | { type: "failed"; company: string; error: string }
+  | { type: "done"; count: number; failed: number };
 
-/**
- * Ingests a batch, triages every company, deep-dives whoever clears the
- * bar, and persists all of it. This is the one function the CLI
- * (scripts/run-pipeline.ts), and later the scheduled job (Phase 5), both
- * call — ingestion/scoring logic lives in exactly one place regardless of
- * what triggers it.
- */
 export async function runBatchPipeline(
   db: PrismaLike,
   batchDisplayName: string,
   thesis: ThesisSnapshot,
   opts: PipelineOptions = {}
-): Promise<{ processed: number }> {
+): Promise<{ processed: number; failed: number; failedCompanies: string[] }> {
   const { deepDiveBar = 6.5, limit = Infinity, onProgress } = opts;
 
   onProgress?.({ type: "ingesting" });
@@ -43,14 +35,21 @@ export async function runBatchPipeline(
 
   const batchRow = await upsertBatch(db, batchDisplayName, allCompanies.length);
 
+  const failedCompanies: string[] = [];
   for (const [index, company] of companies.entries()) {
     onProgress?.({ type: "scoring", company: company.name, index, total: companies.length });
-    const { deepDived } = await scoreAndPersistOne(db, batchRow.id, company, thesis, deepDiveBar);
-    onProgress?.({ type: "scored", company: company.name, deepDived });
+    try {
+      const { deepDived } = await scoreAndPersistOne(db, batchRow.id, company, thesis, deepDiveBar);
+      onProgress?.({ type: "scored", company: company.name, deepDived });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      failedCompanies.push(company.name);
+      onProgress?.({ type: "failed", company: company.name, error: message });
+    }
   }
 
-  onProgress?.({ type: "done", count: companies.length });
-  return { processed: companies.length };
+  onProgress?.({ type: "done", count: companies.length, failed: failedCompanies.length });
+  return { processed: companies.length - failedCompanies.length, failed: failedCompanies.length, failedCompanies };
 }
 
 async function scoreAndPersistOne(

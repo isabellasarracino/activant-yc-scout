@@ -66,7 +66,7 @@ export interface TriageInput {
 export async function scoreTriage({ company, thesis }: TriageInput): Promise<ScoreResult> {
   const msg = await client().messages.create({
     model: SCORING_MODEL,
-    max_tokens: 3000,
+    max_tokens: 4096,
     tools: [SCORE_TOOL],
     tool_choice: { type: "tool", name: "record_score" },
     messages: [{ role: "user", content: buildPrompt(company, thesis) }],
@@ -75,6 +75,11 @@ export async function scoreTriage({ company, thesis }: TriageInput): Promise<Sco
   const toolUse = msg.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
   if (!toolUse) {
     throw new Error(`Scoring model did not return a record_score tool call for "${company.name}"`);
+  }
+  if (msg.stop_reason === "max_tokens") {
+    throw new Error(
+      `Scoring response for "${company.name}" was cut off at the token limit (max_tokens) before finishing — the record_score call is likely incomplete/malformed. Consider raising max_tokens if this recurs.`
+    );
   }
 
   return buildScoreResult(toolUse.input as RawScoreInput, "triage", thesis);

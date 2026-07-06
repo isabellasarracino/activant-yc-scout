@@ -60,6 +60,12 @@ export function describeThesis(thesis: ThesisSnapshot): string {
 
 /** Turns the model's raw record_score input into composite scores + categorization. Shared by every pass. */
 export function buildScoreResult(raw: RawScoreInput, pass: "triage" | "deep_dive", thesis: ThesisSnapshot): ScoreResult {
+  if (!raw || typeof raw !== "object" || !raw.team_general || !raw.thesis_fit) {
+    throw new Error(
+      `record_score input is missing "team_general" and/or "thesis_fit" — the model's tool call was likely incomplete or malformed. Raw input: ${JSON.stringify(raw)}`
+    );
+  }
+
   const teamScores = Object.fromEntries(Object.entries(raw.team_general).map(([k, v]) => [k, v.score]));
   const thesisScores = Object.fromEntries(Object.entries(raw.thesis_fit).map(([k, v]) => [k, v.score]));
 
