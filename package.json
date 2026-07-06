@@ -21,10 +21,10 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
-    "@prisma/adapter-pg": "^6.19.3",
+
     "@prisma/client": "^6.19.3",
     "next": "^15.5.4",
-    "pg": "^8.13.1",
+
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "zod": "^3.25.76"

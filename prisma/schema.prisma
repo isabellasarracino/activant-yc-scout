@@ -13,8 +13,8 @@
 //   docs/ARCHITECTURE.md#categorization.
 
 generator client {
-  provider   = "prisma-client-js"
-  engineType = "client"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
