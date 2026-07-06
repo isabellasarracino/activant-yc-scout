@@ -8,6 +8,7 @@
  * It does not score anything or write to the database yet — that's Phase 2,
  * once the scoring rubric is wired up (see docs/ARCHITECTURE.md#roadmap).
  */
+import "dotenv/config";
 import { writeFileSync } from "node:fs";
 import { ingestBatch } from "../src/lib/yc/ingest";
 

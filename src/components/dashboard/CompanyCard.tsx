@@ -5,6 +5,7 @@ import type { CompanyCompactDTO, CompanyFullDTO } from "../../lib/api/serialize"
 import { fetchCompanyDetail, ApiError } from "../../lib/api/client";
 import { ScoreBars } from "./ScoreBars";
 import { CategoryBadge } from "./CategoryBadge";
+import { formatScore } from "../../lib/scoring/format";
 
 interface CompanyCardProps {
   company: CompanyCompactDTO;
@@ -206,11 +207,11 @@ function RubricSection({
                 fontSize: 13,
                 fontWeight: 600,
                 color: accent,
-                width: 28,
+                width: 44,
                 flexShrink: 0,
               }}
             >
-              {d.score.toFixed(1)}
+              {formatScore(d.score)}
             </span>
             <div>
               <div style={{ fontSize: 13, fontWeight: 500 }}>{d.label}</div>

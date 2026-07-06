@@ -4,10 +4,10 @@ import { render, screen } from "@testing-library/react";
 import { ScoreBars } from "../../src/components/dashboard/ScoreBars";
 
 describe("ScoreBars", () => {
-  it("renders both scores formatted to one decimal", () => {
+  it("renders both scores formatted as X/10", () => {
     render(<ScoreBars teamGeneralScore={6.2} thesisAlignScore={8.4} primaryCategory="thesis_fit" />);
-    expect(screen.getByText("6.2")).toBeInTheDocument();
-    expect(screen.getByText("8.4")).toBeInTheDocument();
+    expect(screen.getByText("6.2/10")).toBeInTheDocument();
+    expect(screen.getByText("8.4/10")).toBeInTheDocument();
   });
 
   it("renders an em dash for a null score rather than crashing or showing NaN", () => {

@@ -10,6 +10,7 @@
  * not just decoratively.
  */
 import type { PrimaryCategory } from "../../lib/scoring/types";
+import { formatScore } from "../../lib/scoring/format";
 
 interface ScoreBarsProps {
   teamGeneralScore: number | null;
@@ -69,12 +70,12 @@ function Bar({
           fontSize: 12,
           fontWeight: emphasized ? 600 : 400,
           color: score === null ? "var(--ink-muted)" : "var(--ink)",
-          width: 28,
+          width: 46,
           textAlign: "right",
           flexShrink: 0,
         }}
       >
-        {score === null ? "—" : score.toFixed(1)}
+        {score === null ? "—" : formatScore(score)}
       </span>
     </div>
   );

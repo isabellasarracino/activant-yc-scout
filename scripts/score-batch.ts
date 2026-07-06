@@ -11,6 +11,7 @@
  * sanity-checked against real output before storage/API/frontend get built
  * on top of it.
  */
+import "dotenv/config";
 import { writeFileSync } from "node:fs";
 import { ingestBatch } from "../src/lib/yc/ingest";
 import { scoreTriage } from "../src/lib/scoring/triage";
