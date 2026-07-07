@@ -7,13 +7,13 @@ interface CompanyGridProps {
   companies: CompanyCompactDTO[];
   emptyMessage: string;
   /**
-   * Companies arriving here are already sorted descending by their
-   * qualifying score — `categorizeForDisplay` (src/lib/db/repository.ts)
-   * does this server-side, sorting each category by whichever axis
-   * qualified it. `rank` just makes that order visible on the page
-   * itself (a "#1" badge + a caption) rather than leaving it implicit;
-   * it doesn't re-sort anything here, since re-sorting client-side could
-   * silently drift from the server's actual ordering logic.
+   * Companies arriving here are already sorted descending by combined
+   * score (team + thesis) — `rankCompaniesForDisplay`
+   * (src/lib/db/repository.ts) does this server-side. `rank` just makes
+   * that order visible on the page itself (a "#1" badge + a caption)
+   * rather than leaving it implicit; it doesn't re-sort anything here,
+   * since re-sorting client-side could silently drift from the server's
+   * actual ordering logic.
    */
   rank?: boolean;
 }

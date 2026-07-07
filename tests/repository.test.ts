@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createFakeDb } from "./fixtures/fakeDb";
 import { sampleCompany, sampleThesis, fullRawScore } from "./fixtures/testData";
 import {
-  categorizeForDisplay,
+  rankCompaniesForDisplay,
   getCompanyBySlug,
   listAllCompaniesWithRelations,
   listBatchesFromDb,
@@ -138,8 +138,8 @@ describe("upsertScore", () => {
   });
 });
 
-describe("categorizeForDisplay", () => {
-  it("groups by primary category and sorts each group by strongest score, descending", async () => {
+describe("rankCompaniesForDisplay", () => {
+  it("ranks scored companies in one list by combined score (team + thesis), descending", async () => {
     const db = createFakeDb();
     const batch = await upsertBatch(db, "Summer 2026", 3);
 
@@ -148,9 +148,6 @@ describe("categorizeForDisplay", () => {
     const { id: idA } = await upsertCompanyWithFounders(db, batch.id, companyA);
     const { id: idB } = await upsertCompanyWithFounders(db, batch.id, companyB);
 
-    // Every team dimension high, every thesis dimension low, for both
-    // companies — unambiguously team_general-primary for each, differing
-    // only in strength, so the sort order is the only thing under test.
     const lowThesis = { sector_alignment: 2, business_model_fit: 2, research_alignment: 2, category_potential: 2 };
     await upsertScore(
       db,
@@ -164,9 +161,34 @@ describe("categorizeForDisplay", () => {
     );
 
     const all = await listCompaniesInBatch(db, batch.id);
-    const grouped = categorizeForDisplay(all);
+    const { ranked } = rankCompaniesForDisplay(all);
 
-    expect(grouped.teamGeneral.map((c) => c.name)).toEqual(["Company B", "Company A"]);
+    expect(ranked.map((c) => c.name)).toEqual(["Company B", "Company A"]);
+  });
+
+  it("ranks by the sum of both axes, not just the stronger one — a company strong on both outranks one that's stronger on only one", async () => {
+    const db = createFakeDb();
+    const batch = await upsertBatch(db, "Summer 2026", 2);
+
+    // Balanced: 6+6=12 combined. Lopsided: 9+2=11 combined, even though its
+    // single strongest axis (9) beats the balanced company's best axis (6).
+    const balanced: NormalizedCompany = { ...sampleCompany, slug: "balanced", name: "Balanced" };
+    const lopsided: NormalizedCompany = { ...sampleCompany, slug: "lopsided", name: "Lopsided" };
+    const { id: idBalanced } = await upsertCompanyWithFounders(db, batch.id, balanced);
+    const { id: idLopsided } = await upsertCompanyWithFounders(db, batch.id, lopsided);
+
+    const mid = { founder_market_fit: 6, founder_track_record: 6, team_completeness: 6, idea_quality: 6, execution_signal: 6 };
+    const midThesis = { sector_alignment: 6, business_model_fit: 6, research_alignment: 6, category_potential: 6 };
+    await upsertScore(db, idBalanced, buildScoreResult(fullRawScore({ team: mid, thesisScores: midThesis }), "triage", sampleThesis));
+
+    const high = { founder_market_fit: 9, founder_track_record: 9, team_completeness: 9, idea_quality: 9, execution_signal: 9 };
+    const lowThesis = { sector_alignment: 2, business_model_fit: 2, research_alignment: 2, category_potential: 2 };
+    await upsertScore(db, idLopsided, buildScoreResult(fullRawScore({ team: high, thesisScores: lowThesis }), "triage", sampleThesis));
+
+    const all = await listCompaniesInBatch(db, batch.id);
+    const { ranked } = rankCompaniesForDisplay(all);
+
+    expect(ranked.map((c) => c.name)).toEqual(["Balanced", "Lopsided"]);
   });
 
   it("puts companies with no score at all into unranked rather than throwing", async () => {
@@ -174,8 +196,19 @@ describe("categorizeForDisplay", () => {
     const batch = await upsertBatch(db, "Summer 2026", 1);
     await upsertCompanyWithFounders(db, batch.id, sampleCompany);
     const all = await listCompaniesInBatch(db, batch.id);
-    const grouped = categorizeForDisplay(all);
-    expect(grouped.unranked).toHaveLength(1);
+    const { unranked } = rankCompaniesForDisplay(all);
+    expect(unranked).toHaveLength(1);
+  });
+
+  it("never puts a scored company in unranked — every real score gets ranked", async () => {
+    const db = createFakeDb();
+    const batch = await upsertBatch(db, "Summer 2026", 1);
+    const { id } = await upsertCompanyWithFounders(db, batch.id, sampleCompany);
+    await upsertScore(db, id, buildScoreResult(fullRawScore(), "triage", sampleThesis));
+    const all = await listCompaniesInBatch(db, batch.id);
+    const { ranked, unranked } = rankCompaniesForDisplay(all);
+    expect(ranked).toHaveLength(1);
+    expect(unranked).toHaveLength(0);
   });
 });
 

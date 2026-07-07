@@ -98,9 +98,14 @@ function toDetail(company: CompanyWithRelations, batchNames: Map<string, string>
   };
 }
 
-/** The score categorization is keyed on for "top" / "best" style ranking — the stronger of the two axes, same logic `categorizeForDisplay` uses. */
+/** Used for search-result tie-breaking (see below) — "how notable is this company overall." */
 function strengthOf(company: CompanyWithRelations): number {
   return Math.max(company.score?.teamGeneralScore ?? 0, company.score?.thesisAlignScore ?? 0);
+}
+
+/** Team + thesis combined — what "top companies" ranks by now, matching the dashboard's single ranked list (rankCompaniesForDisplay in src/lib/db/repository.ts). */
+function combinedScoreOf(company: CompanyWithRelations): number {
+  return (company.score?.teamGeneralScore ?? 0) + (company.score?.thesisAlignScore ?? 0);
 }
 
 export async function listBatchesSummary(db: PrismaLike): Promise<BatchSummary[]> {
@@ -154,7 +159,7 @@ export async function searchCompanies(db: PrismaLike, input: SearchCompaniesInpu
 }
 
 export interface ListTopCompaniesInput {
-  /** Restrict to one category, or omit/"any" to rank by whichever axis is stronger — mirrors categorizeForDisplay's sort. */
+  /** Restrict to one category, or omit/"any" to rank by combined score (team + thesis) — matches the dashboard's single ranked list. */
   category?: "team_general" | "thesis_fit" | "any";
   batchId?: string;
   limit?: number;
@@ -175,7 +180,7 @@ export async function listTopCompanies(db: PrismaLike, input: ListTopCompaniesIn
       ? (c.score?.teamGeneralScore ?? 0)
       : category === "thesis_fit"
         ? (c.score?.thesisAlignScore ?? 0)
-        : strengthOf(c);
+        : combinedScoreOf(c);
 
   const sorted = [...filtered].sort((a, b) => rankValue(b) - rankValue(a));
   return sorted.slice(0, limit).map((c) => toSummary(c, batchNames));

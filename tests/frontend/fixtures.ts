@@ -65,7 +65,6 @@ export const sampleFullCompany: CompanyFullDTO = {
 
 export const sampleBatchDetail: BatchDetailResponse = {
   batch: sampleBatch,
-  teamGeneral: [],
-  thesisFit: [sampleCompactCompany],
+  ranked: [sampleCompactCompany],
   unranked: [],
 };

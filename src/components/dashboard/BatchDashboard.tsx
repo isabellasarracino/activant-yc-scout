@@ -135,17 +135,10 @@ export function BatchDashboard() {
       {detail && detailState === "ready" && (
         <>
           <CompanyGrid
-            title="Activant Thesis Fit"
-            accent="var(--thesis)"
-            companies={detail.thesisFit}
-            emptyMessage="No companies have qualified on thesis fit yet."
-            rank
-          />
-          <CompanyGrid
-            title="Team & General Interest"
-            accent="var(--team)"
-            companies={detail.teamGeneral}
-            emptyMessage="No companies have qualified on team/general interest yet."
+            title="All Companies"
+            accent="var(--ink)"
+            companies={detail.ranked}
+            emptyMessage="No companies have been scored yet."
             rank
           />
           {detail.unranked.length > 0 && (
@@ -159,9 +152,12 @@ export function BatchDashboard() {
                   marginBottom: 12,
                 }}
               >
-                {detail.unranked.length} unranked (below the qualifying bar on both axes)
+                {detail.unranked.length} not yet evaluated
               </summary>
-              <CompanyGrid title="Unranked" accent="var(--line)" companies={detail.unranked} emptyMessage="" />
+              <p style={{ fontSize: 12.5, color: "var(--ink-muted)", margin: "0 0 12px", fontStyle: "italic" }}>
+                Scout hasn&apos;t been able to look into these companies yet — they&apos;re ingested but not scored.
+              </p>
+              <CompanyGrid title="Not yet evaluated" accent="var(--line)" companies={detail.unranked} emptyMessage="" />
             </details>
           )}
         </>

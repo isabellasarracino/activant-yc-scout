@@ -44,7 +44,7 @@ describe("BatchDashboard", () => {
     );
   });
 
-  it("defaults to the first (most recent) batch and renders its companies grouped by category", async () => {
+  it("defaults to the first (most recent) batch and renders its ranked companies", async () => {
     mockFetchBatches.mockResolvedValueOnce([sampleBatch]);
     mockFetchBatchDetail.mockResolvedValueOnce(sampleBatchDetail);
 
@@ -52,8 +52,8 @@ describe("BatchDashboard", () => {
 
     await waitFor(() => expect(mockFetchBatchDetail).toHaveBeenCalledWith("summer-2026"));
     await waitFor(() => expect(screen.getByText("Florin")).toBeInTheDocument());
-    expect(screen.getByRole("heading", { name: "Activant Thesis Fit" })).toBeInTheDocument();
-    expect(screen.getByText("No companies have qualified on team/general interest yet.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "All Companies" })).toBeInTheDocument();
+    expect(screen.getByText("Activant Thesis Fit")).toBeInTheDocument(); // category badge on the card
   });
 
   it("shows an error message if the batch detail fails to load", async () => {
@@ -69,7 +69,7 @@ describe("BatchDashboard", () => {
     const secondBatch = { ...sampleBatch, id: "winter-2027", displayName: "Winter 2027" };
     mockFetchBatches.mockResolvedValueOnce([sampleBatch, secondBatch]);
     mockFetchBatchDetail.mockResolvedValueOnce(sampleBatchDetail); // initial load (summer-2026)
-    mockFetchBatchDetail.mockResolvedValueOnce({ ...sampleBatchDetail, batch: secondBatch, thesisFit: [] }); // after switching
+    mockFetchBatchDetail.mockResolvedValueOnce({ ...sampleBatchDetail, batch: secondBatch, ranked: [] }); // after switching
 
     const user = userEvent.setup();
     render(<BatchDashboard />);
@@ -83,19 +83,20 @@ describe("BatchDashboard", () => {
     await waitFor(() => expect(screen.queryByText("Florin")).not.toBeInTheDocument());
   });
 
-  it("puts unranked companies behind a collapsed disclosure, not in the main grids", async () => {
+  it("puts not-yet-scored companies behind a collapsed disclosure, with a reason, not in the main ranked list", async () => {
     const unrankedCo = { ...sampleCompactCompany, slug: "quiet-co", name: "Quiet Co", primaryCategory: null };
     mockFetchBatches.mockResolvedValueOnce([sampleBatch]);
-    mockFetchBatchDetail.mockResolvedValueOnce({ ...sampleBatchDetail, thesisFit: [], unranked: [unrankedCo] });
+    mockFetchBatchDetail.mockResolvedValueOnce({ ...sampleBatchDetail, ranked: [], unranked: [unrankedCo] });
 
     render(<BatchDashboard />);
 
-    await waitFor(() => expect(screen.getByText(/1 unranked/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/1 not yet evaluated/)).toBeInTheDocument());
+    expect(screen.getByText(/Scout hasn't been able to look into these companies yet/)).toBeInTheDocument();
     // Collapsed by default — the <details> element itself carries the
     // collapsed/expanded state; jsdom doesn't reliably apply the
     // browser's native content-hiding CSS, so check the semantic state
     // directly rather than whether the text is findable in the DOM.
-    const disclosure = screen.getByText(/1 unranked/).closest("details");
+    const disclosure = screen.getByText(/1 not yet evaluated/).closest("details");
     expect(disclosure).not.toHaveAttribute("open");
   });
 });

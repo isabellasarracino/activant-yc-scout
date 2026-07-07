@@ -9,8 +9,7 @@ import type { BatchDTO, CompanyCompactDTO, CompanyFullDTO } from "./serialize";
 
 export interface BatchDetailResponse {
   batch: BatchDTO;
-  teamGeneral: CompanyCompactDTO[];
-  thesisFit: CompanyCompactDTO[];
+  ranked: CompanyCompactDTO[];
   unranked: CompanyCompactDTO[];
 }
 

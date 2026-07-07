@@ -23,7 +23,7 @@ export interface CategorizationResult {
  * is still nullable in the type/schema for a company that hasn't been
  * *scored* at all yet (no score row) — that's a different state than
  * "scored but weak," and still renders separately (see
- * `categorizeForDisplay` in src/lib/db/repository.ts).
+ * `rankCompaniesForDisplay` in src/lib/db/repository.ts).
  *
  * `secondaryTag` is a separate, still-meaningful threshold: it flags
  * whether the *non-primary* axis is independently strong on its own

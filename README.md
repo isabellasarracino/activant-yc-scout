@@ -71,15 +71,17 @@ roadmap.
   `GET /api/batches/[batch]`, `GET /api/companies/[slug]`, `POST /api/chat`.
   Read-only by design; ingestion/scoring stays CLI/cron-driven, never
   triggered from a request handler.
-- `src/components/dashboard/` — the batch dashboard frontend (Phase 4a):
-  `BatchDashboard` (top-level, fetches batches + selected batch detail),
-  `CompanyCard` (compact by default, lazily fetches full rubric detail on
-  expand), `ScoreBars` (the twin-axis score visual), `CategoryBadge`,
-  `BatchSwitcher`, `CompanyGrid` (also shows a `#1, #2, …` rank badge and
-  a "ranked highest score first" caption — the underlying sort was always
-  there via `categorizeForDisplay`, this just makes it visible). All
-  client components calling the REST API via `src/lib/api/client.ts` —
-  see docs/ARCHITECTURE.md#frontend for the design direction.
+- `src/components/dashboard/` — the batch dashboard frontend: `BatchDashboard`
+  (top-level, fetches batches + selected batch detail, one combined
+  ranked list by total score — see docs/ARCHITECTURE.md#categorization for
+  why this replaced an earlier two-list split), `CompanyCard` (compact by
+  default, lazily fetches full rubric detail on expand), `ScoreBars` (the
+  twin-axis score visual), `CategoryBadge` (still shown per card even in
+  one combined list), `BatchSwitcher`, `CompanyGrid` (the `#1, #2, …` rank
+  badge — the underlying sort, `rankCompaniesForDisplay`, lives in
+  `src/lib/db/repository.ts`). All client components calling the REST API
+  via `src/lib/api/client.ts` — see docs/ARCHITECTURE.md#frontend for the
+  design direction.
 - `src/components/chat/ChatPanel.tsx` + `src/app/chat/page.tsx` — the
   chat UI (Phase 4b): a plain labeled transcript (not chat bubbles),
   example prompts on an empty conversation, conversation history kept in

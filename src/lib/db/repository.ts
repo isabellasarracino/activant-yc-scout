@@ -162,21 +162,36 @@ export async function listAllCompaniesWithRelations(db: PrismaLike): Promise<Com
   return db.company.findMany({ include: { founders: true, score: true } });
 }
 
-export interface CategorizedCompanies {
-  teamGeneral: CompanyWithRelations[];
-  thesisFit: CompanyWithRelations[];
+export interface RankedCompanies {
+  /** Every scored company, one list, ranked by combined score (team + thesis) descending. Each still carries its own primaryCategory/secondaryTag for a badge — this is a display-grouping change, not a categorization change. */
+  ranked: CompanyWithRelations[];
+  /** Not yet scored at all (no CompanyScore row) — nothing to rank without a score. */
   unranked: CompanyWithRelations[];
 }
 
-/** Groups a batch's companies by primary category, sorted by their strongest score within each group. */
-export function categorizeForDisplay(companies: CompanyWithRelations[]): CategorizedCompanies {
-  const strengthOf = (c: CompanyWithRelations) =>
-    Math.max(c.score?.teamGeneralScore ?? 0, c.score?.thesisAlignScore ?? 0);
-  const byStrengthDesc = (a: CompanyWithRelations, b: CompanyWithRelations) => strengthOf(b) - strengthOf(a);
+/**
+ * Ranks a batch's companies in one combined list by total score (team +
+ * thesis), highest first — replacing an earlier two-list split (Team &
+ * General Interest / Activant Thesis Fit shown separately) per explicit
+ * product decision once there was a real batch's worth of scored
+ * companies to look at. Each company still carries its own
+ * primaryCategory (whichever axis is stronger) and secondaryTag (also
+ * clears the other axis's bar) — those are unchanged, just displayed as
+ * a badge on one ranked list instead of determining which of two lists a
+ * card lands in. "unranked" still means "no CompanyScore row at all" —
+ * there's nothing left to exclude on a low-score basis (see
+ * docs/ARCHITECTURE.md#categorization for that earlier removal), so the
+ * only reason left for a company not to have a combined-score rank is
+ * genuinely not having been scored yet.
+ */
+export function rankCompaniesForDisplay(companies: CompanyWithRelations[]): RankedCompanies {
+  const combinedScore = (c: CompanyWithRelations) => (c.score?.teamGeneralScore ?? 0) + (c.score?.thesisAlignScore ?? 0);
+
+  const scored = companies.filter((c) => c.score !== null);
+  const unranked = companies.filter((c) => c.score === null);
 
   return {
-    teamGeneral: companies.filter((c) => c.score?.primaryCategory === "team_general").sort(byStrengthDesc),
-    thesisFit: companies.filter((c) => c.score?.primaryCategory === "thesis_fit").sort(byStrengthDesc),
-    unranked: companies.filter((c) => !c.score || c.score.primaryCategory === null),
+    ranked: [...scored].sort((a, b) => combinedScore(b) - combinedScore(a)),
+    unranked,
   };
 }

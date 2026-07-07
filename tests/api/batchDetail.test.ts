@@ -14,7 +14,7 @@ function paramsFor(batch: string) {
 }
 
 describe("GET /api/batches/[batch]", () => {
-  it("groups companies into teamGeneral/thesisFit/unranked, never duplicating one across lists", async () => {
+  it("returns companies in one ranked list, each still carrying its own category badge fields", async () => {
     const batch = await upsertBatch(db, "Summer 2026", 2);
 
     const teamCo = { ...sampleCompany, slug: "team-co", name: "Team Co" };
@@ -36,10 +36,8 @@ describe("GET /api/batches/[batch]", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.teamGeneral.map((c: { slug: string }) => c.slug)).toEqual(["team-co"]);
-    expect(body.thesisFit).toEqual([]);
-    // never appears in both lists
-    expect(body.thesisFit.map((c: { slug: string }) => c.slug)).not.toContain("team-co");
+    expect(body.ranked.map((c: { slug: string }) => c.slug)).toEqual(["team-co"]);
+    expect(body.ranked[0].primaryCategory).toBe("team_general");
   });
 
   it("returns 404 for an unknown batch id", async () => {
@@ -57,9 +55,20 @@ describe("GET /api/batches/[batch]", () => {
 
     const response = await GET(new Request("http://localhost/api/batches/fall-2026"), paramsFor(batch.id));
     const body = await response.json();
-    const all = [...body.teamGeneral, ...body.thesisFit, ...body.unranked];
+    const all = [...body.ranked, ...body.unranked];
     const found = all.find((c: { slug: string }) => c.slug === "compact-check");
     expect(found.rubricBreakdown).toBeUndefined();
     expect(found.founders).toBeUndefined();
+  });
+
+  it("puts a not-yet-scored company in unranked, not in the ranked list", async () => {
+    const batch = await upsertBatch(db, "Winter 2027", 1);
+    await upsertCompanyWithFounders(db, batch.id, { ...sampleCompany, slug: "pending-co", name: "Pending Co" });
+
+    const response = await GET(new Request("http://localhost/api/batches/winter-2027"), paramsFor(batch.id));
+    const body = await response.json();
+
+    expect(body.ranked).toEqual([]);
+    expect(body.unranked.map((c: { slug: string }) => c.slug)).toEqual(["pending-co"]);
   });
 });
