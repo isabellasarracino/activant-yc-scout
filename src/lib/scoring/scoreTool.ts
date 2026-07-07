@@ -1,8 +1,8 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { categorize } from "./categorize";
 import { TEAM_GENERAL_RUBRIC, THESIS_FIT_RUBRIC, compositeScore, type Rubric } from "./rubric";
 import type { RawScoreInput, ScoreResult } from "./types";
 import type { ThesisSnapshot } from "../thesis/types";
+import type { ToolDef } from "../ai/openrouter";
 
 function dimensionSchema(rubric: Rubric) {
   return {
@@ -29,7 +29,7 @@ function dimensionSchema(rubric: Rubric) {
 }
 
 /** One tool definition built from both rubrics, so triage and deep-dive can never silently drift apart. */
-export function buildScoreTool(): Anthropic.Tool {
+export function buildScoreTool(): ToolDef {
   return {
     name: "record_score",
     description: "Record dimension-by-dimension scores for both evaluation criteria, plus a short overall summary.",

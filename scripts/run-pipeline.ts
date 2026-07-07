@@ -1,11 +1,20 @@
 /**
  * Usage:
  *   npm run db:generate                          (once — needs DATABASE_URL and real internet access)
- *   npm run pipeline -- "Summer 2026" --limit=10
+ *   npm run pipeline -- "Summer 2026"             (whole batch)
+ *   npm run pipeline -- "Summer 2026" --limit=10  (cap for a cheap smoke test)
  *
  * Runs ingestion + scoring + persistence end to end against a real
- * Postgres database. Needs DATABASE_URL and ANTHROPIC_API_KEY set (see
- * .env.example) and `npm run db:generate` to have been run at least once.
+ * Postgres database. Needs DATABASE_URL and OPENROUTER_API_KEY set —
+ * either exported in your shell, or in a .env file in the project root
+ * (copy .env.example, fill in real values; loaded automatically via the
+ * `dotenv/config` import above, gitignored so it never gets committed) —
+ * and `npm run db:generate` to have been run at least once.
+ *
+ * If a company fails to score, the run does NOT abort — it's logged and
+ * the rest of the batch continues. Safe to re-run the same command
+ * afterward; already-scored companies just get re-scored (upsert-based,
+ * no duplicates), and the previously-failed ones get another attempt.
  */
 import "dotenv/config";
 import { getDb } from "../src/lib/db/client";

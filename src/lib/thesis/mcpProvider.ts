@@ -30,6 +30,15 @@ const SUMMARIZE_PROMPT =
  *    assuming this file is still current.
  *
  * Until both are confirmed, use ManualThesisProvider.
+ *
+ * NOTE: unlike the rest of the codebase (moved to OpenRouter — see
+ * src/lib/ai/openrouter.ts), this file stays on the direct Anthropic SDK.
+ * The MCP connector beta feature it depends on (`betas:
+ * ["mcp-client-2025-11-20"]`, `mcp_toolset` tool config) is Anthropic-
+ * specific with no OpenRouter equivalent, the same shape of constraint
+ * that made scoreDeepDive drop web search. This is inactive code either
+ * way (ManualThesisProvider is what's actually used), so it needs
+ * ANTHROPIC_API_KEY specifically only if and when it's ever activated.
  */
 export class McpThesisProvider implements ThesisProvider {
   constructor(

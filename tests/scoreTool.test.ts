@@ -53,4 +53,18 @@ describe("buildScoreResult", () => {
     expect(buildScoreResult(raw, "triage", sampleThesis).pass).toBe("triage");
     expect(buildScoreResult(raw, "deep_dive", sampleThesis).pass).toBe("deep_dive");
   });
+
+  it("throws a clear, diagnosable error rather than a generic crash when team_general is missing from the model's response", () => {
+    // Real failure mode hit on the actual Summer 2026 batch run: a
+    // malformed/incomplete record_score tool call crashed with
+    // "Cannot convert undefined or null to object" deep inside
+    // Object.entries. This should fail loudly and specifically instead.
+    const raw = { ...fullRawScore(), team_general: undefined } as unknown as Parameters<typeof buildScoreResult>[0];
+    expect(() => buildScoreResult(raw, "triage", sampleThesis)).toThrow(/team_general/);
+  });
+
+  it("throws a clear error when thesis_fit is missing", () => {
+    const raw = { ...fullRawScore(), thesis_fit: undefined } as unknown as Parameters<typeof buildScoreResult>[0];
+    expect(() => buildScoreResult(raw, "triage", sampleThesis)).toThrow(/thesis_fit/);
+  });
 });

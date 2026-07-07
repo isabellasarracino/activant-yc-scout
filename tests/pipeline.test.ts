@@ -125,4 +125,39 @@ describe("runBatchPipeline", () => {
     const batches = await listBatchesFromDb(db);
     expect(batches[0]?.companyCount).toBe(2); // full batch size, not the limited 1
   });
+
+  it("continues past a single company's scoring failure rather than aborting the whole run", async () => {
+    // Real bug this guards against: company #4 of a 62-company batch threw
+    // on a malformed model response, and an earlier all-or-nothing version
+    // threw away 3 already-scored companies and never attempted the
+    // remaining 58.
+    vi.mocked(ingestBatch).mockResolvedValue([company("a", "A"), company("bad", "Bad Co"), company("c", "C")]);
+    vi.mocked(scoreTriage).mockImplementation(async ({ company: c }) => {
+      if (c.slug === "bad") throw new Error("record_score input is missing \"team_general\"");
+      return score();
+    });
+
+    const db = createFakeDb();
+    const result = await runBatchPipeline(db, "Summer 2026", sampleThesis, {});
+
+    expect(result.processed).toBe(2);
+    expect(result.failed).toBe(1);
+    expect(result.failedCompanies).toEqual(["Bad Co"]);
+    expect(await getCompanyBySlug(db, "a")).toMatchObject({ score: { pass: "triage" } });
+    expect(await getCompanyBySlug(db, "c")).toMatchObject({ score: { pass: "triage" } });
+  });
+
+  it("emits a 'failed' progress event with the error message when a company's scoring throws", async () => {
+    vi.mocked(ingestBatch).mockResolvedValue([company("bad", "Bad Co")]);
+    vi.mocked(scoreTriage).mockRejectedValue(new Error("boom"));
+
+    const events: Array<{ type: string; error?: string }> = [];
+    const db = createFakeDb();
+    await runBatchPipeline(db, "Summer 2026", sampleThesis, { onProgress: (e) => events.push(e) });
+
+    const failedEvent = events.find((e) => e.type === "failed");
+    expect(failedEvent?.error).toBe("boom");
+    const doneEvent = events.find((e) => e.type === "done") as { failed?: number } | undefined;
+    expect(doneEvent?.failed).toBe(1);
+  });
 });

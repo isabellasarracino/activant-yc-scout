@@ -1,5 +1,5 @@
-import Anthropic from "@anthropic-ai/sdk";
 import type { PrismaLike } from "../db/prismaLike";
+import type { ToolDef } from "../ai/openrouter";
 import { getCompanyDetail, listBatchesSummary, listTopCompanies, searchCompanies } from "./queryTools";
 
 /**
@@ -9,7 +9,7 @@ import { getCompanyDetail, listBatchesSummary, listTopCompanies, searchCompanies
  * lets loosely-phrased questions work without a fixed intent-classifier
  * (docs/ARCHITECTURE.md#chat--qa).
  */
-export const CHAT_TOOLS: Anthropic.Tool[] = [
+export const CHAT_TOOLS: ToolDef[] = [
   {
     name: "list_batches",
     description:

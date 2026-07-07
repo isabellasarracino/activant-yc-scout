@@ -5,17 +5,30 @@ Watches new Y Combinator batches, scores every company against two criteria —
 research thesis — and answers questions about any YC company or batch, past
 or present.
 
-**Status: Phase 4b of 5 — frontend complete (dashboard + chat UI).**
-Ingestion, scoring, persistence, the REST API, chat/RAG, the batch
-dashboard, and the chat UI are all done. Only scheduled automation
-(Phase 5) is left — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
-the full roadmap.
+**Status: Phase 4b of 5 complete and deployed live**, plus a mid-flight
+provider switch. Ingestion, scoring, persistence, the REST API, chat/RAG,
+the batch dashboard, and the chat UI are all built and were confirmed
+working end-to-end against a real Vercel deployment, real Supabase
+database, and (at the time) a real Anthropic key. Since then, every AI
+call was switched to route through **OpenRouter** instead of Anthropic
+directly (see [docs/ARCHITECTURE.md#model-provider](docs/ARCHITECTURE.md#model-provider))
+— **that switch itself is not yet live-tested**, same caveat as any other
+first run. Only scheduled automation (Phase 5) is left on the original
+roadmap — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full
+roadmap.
 
 ## What's here right now
 
 - `prisma/schema.prisma` — the full data model (batches, companies, founders,
-  scores, thesis versions), using Prisma's Rust-free "driver adapter" client
-  mode (no native query-engine binary at runtime).
+  scores, thesis versions), using Prisma's classic binary Query Engine
+  (switched back to this after the newer WASM engine mode hit a
+  still-open bundling bug on Vercel — see
+  docs/ARCHITECTURE.md#storage).
+- `src/lib/ai/openrouter.ts` — the shared OpenRouter client + forced-tool-call
+  helper every scoring/extraction/chat call goes through (switched from
+  calling Anthropic directly — see docs/ARCHITECTURE.md#model-provider for
+  why, including the one real regression: deep-dive's live web search got
+  dropped, an Anthropic-only capability with no OpenRouter equivalent).
 - `src/lib/yc/` — pulls batch + company data from a daily-refreshed mirror
   of YC's own data, enriched with founder bios pulled from each company's
   own YC profile page, plus (`companyWebsite.ts`) a fetcher for the
@@ -23,27 +36,35 @@ the full roadmap.
 - `src/lib/scoring/` — the two rubrics (`rubric.ts`), the shared
   tool/result-building logic (`scoreTool.ts`), the fast triage scorer
   (`triage.ts`), the deep-dive scorer (`deepDive.ts`, adds the company
-  website + a live web-search tool), and the categorization tie-break logic
-  (`categorize.ts`). See [docs/RUBRIC.md](docs/RUBRIC.md) for the rubric in
-  plain language.
+  website to the same prompt shape triage uses — no live web search
+  anymore), score display formatting (`format.ts`, "7/10" not "7.0"), and
+  the categorization logic (`categorize.ts` — every scored company gets a
+  category now, no "below the bar" exclusion). See
+  [docs/RUBRIC.md](docs/RUBRIC.md) for the rubric in plain language.
 - `src/lib/thesis/` — a `ThesisProvider` abstraction with two
   implementations: a working file-based one (`manualProvider.ts`, backed by
   [docs/thesis/current.md](docs/thesis/current.md)) and an MCP-connector-based
-  one (`mcpProvider.ts`, structurally complete but not yet live-tested — see
+  one (`mcpProvider.ts`, structurally complete but not yet live-tested, and
+  the one file still on the direct Anthropic SDK — see
   docs/ARCHITECTURE.md#thesis-source for what's left to confirm).
 - `src/lib/db/` — the storage layer: a hand-written `PrismaLike` interface
   (`prismaLike.ts`), repository functions for batches/companies/founders/scores
-  (`repository.ts`), and the real Prisma + driver-adapter wiring
-  (`client.ts` — see docs/ARCHITECTURE.md#storage for the one thing that
-  needs `prisma generate` run before it compiles).
+  (`repository.ts`), and the real Prisma wiring (`client.ts` — classic
+  binary Query Engine, see docs/ARCHITECTURE.md#storage for the one thing
+  that needs `prisma generate` run before it compiles, and why it's not
+  the newer WASM engine mode).
 - `src/lib/pipeline/runBatchPipeline.ts` — the single function tying
-  ingestion, both scoring passes, and persistence together.
+  ingestion, both scoring passes, and persistence together. Resilient to a
+  single company's scoring failure (logs it via a `"failed"` progress event
+  and keeps going) rather than aborting the whole batch run — see
+  docs/ARCHITECTURE.md#scoring-design for the real incident that drove this.
 - `src/lib/chat/` — the chat/Q&A layer: `queryTools.ts` (search, top-companies,
-  full-detail, list-batches — pure DB queries, no Anthropic dependency),
-  `tools.ts` (the Anthropic tool schemas + dispatcher), and `answer.ts` (the
-  tool-calling loop that lets Claude decide what to look up before
-  answering). No embeddings/vector search — see queryTools.ts for why an
-  in-memory scan is the right call at this data volume.
+  full-detail, list-batches — pure DB queries, no AI-provider dependency),
+  `tools.ts` (provider-agnostic tool schemas + dispatcher), and `answer.ts`
+  (the tool-calling loop, via OpenRouter, that lets the model decide what
+  to look up before answering). No embeddings/vector search — see
+  queryTools.ts for why an in-memory scan is the right call at this data
+  volume.
 - `src/lib/api/serialize.ts` — plain JSON-safe DTOs for the REST layer
   (compact vs. full company shape, batch summary).
 - `src/app/api/` — the REST + chat endpoints: `GET /api/batches`,
@@ -67,19 +88,19 @@ the full roadmap.
 - `scripts/` — CLIs for ingestion (`ingest-batch.ts`), dry-run scoring
   without a database (`score-batch.ts`), and the full persisted pipeline
   (`run-pipeline.ts`).
-- `tests/` — 153 tests: real captured YC data and mirror fixtures
+- `tests/` — 172 tests: real captured YC data and mirror fixtures
   (`tests/fixtures/`), an in-memory fake database for storage-layer
-  tests, a mocked Anthropic client for scoring/chat call shapes, mocked
-  `Request`/DB-client calls for the API routes (`tests/api/`), and React
-  Testing Library + jsdom for every frontend component (`tests/frontend/`)
-  — see docs/ARCHITECTURE.md#frontend for why there's no actual browser
-  screenshot to point to yet.
+  tests, a mocked `openai` client for scoring/chat call shapes (routed
+  through OpenRouter), mocked `Request`/DB-client calls for the API routes
+  (`tests/api/`), and React Testing Library + jsdom for every frontend
+  component (`tests/frontend/`) — see docs/ARCHITECTURE.md#frontend for
+  why there's no actual browser screenshot to point to yet.
 
 ## Quick start
 
 ```bash
 npm install
-cp .env.example .env   # fill in ANTHROPIC_API_KEY and DATABASE_URL
+cp .env.example .env   # fill in OPENROUTER_API_KEY and DATABASE_URL — loaded automatically by every script below
 npm test                # runs offline, against fixtures and an in-memory fake DB — no keys needed
 npm run ingest -- "Summer 2026" --fast   # real network call, needs internet
 npm run score -- "Summer 2026" --limit=10 --out=results.json   # real API calls, no DB needed
@@ -105,20 +126,25 @@ smoke test before running a whole 150-300 company batch. `score` is a
 dry run (prints/saves JSON, no database); `pipeline` does the same work but
 persists it.
 
-One thing to watch closely the first time `score` runs for real: the
-deep-dive pass (`src/lib/scoring/deepDive.ts`) mixes a live web-search tool
-with a custom scoring tool in a way that was built and unit-tested against
-a mocked API client, not a live one — see
-[docs/ARCHITECTURE.md#scoring-design](docs/ARCHITECTURE.md#scoring-design)
-for exactly what to check on that first run. The chat endpoint
-(`src/lib/chat/answer.ts`) is in the same boat — its tool-calling loop is
-unit-tested against a mocked client, not yet exercised against a live
-response. The frontend (`src/components/dashboard/`, `src/components/chat/`)
-has the equivalent gap for a different reason: there's no headless
-browser available in the sandbox this was built in, so it's tested with
-React Testing Library against jsdom rather than an actual rendered
-browser — worth an actual look once `npm run dev` is pointed at a real
-database, especially on a narrow/mobile screen.
+One thing to watch closely the first time `score` runs for real: **the
+entire scoring/chat stack just switched from calling Anthropic directly to
+routing through OpenRouter** (see
+[docs/ARCHITECTURE.md#model-provider](docs/ARCHITECTURE.md#model-provider)
+for the full story, including a real regression — deep-dive scoring's live
+web search got dropped, since it's an Anthropic-only capability with no
+OpenRouter equivalent). Every file that talks to OpenRouter is unit-tested
+against a mocked client, same rigor as always, but none of it has hit
+`openrouter.ai` for real — that domain isn't reachable from the sandbox
+this was built in either. Model slugs in particular
+(`anthropic/claude-sonnet-5`, `anthropic/claude-haiku-4.5` — overridable
+via env vars, see `.env.example`) are the most likely thing to need a
+one-line fix if a request 404s. The frontend
+(`src/components/dashboard/`, `src/components/chat/`) has the equivalent
+"not tested against the real thing" gap for a different reason: there's no
+headless browser available in the sandbox this was built in, so it's
+tested with React Testing Library against jsdom rather than an actual
+rendered browser — worth an actual look once `npm run dev` is pointed at a
+real database, especially on a narrow/mobile screen.
 
 Note: this sandboxed environment I built it in can't reach `ycombinator.com`
 or the mirror API itself (its outbound network is locked to package
@@ -141,9 +167,16 @@ if either ever breaks, in [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md).
   simplest path to "a website," one Vercel project.
 - **Postgres via Prisma** — you already have Supabase connected, which is a
   natural fit; any Postgres host works.
-- **Claude API** for extraction, scoring, and chat; the **Message Batches
-  API** specifically for scoring a full batch of 150-300 companies
-  asynchronously at half the per-token cost, rather than live/blocking calls.
+- **OpenRouter** (not Anthropic directly) for extraction, scoring, and chat
+  — switched after hitting an Anthropic credit-balance error mid-batch-run,
+  to reduce dependence on any one provider. Real tradeoff: deep-dive
+  scoring's live web-search step got dropped in the switch (Anthropic-only
+  capability, no OpenRouter equivalent) — see
+  [docs/ARCHITECTURE.md#model-provider](docs/ARCHITECTURE.md#model-provider).
+  An async batch-discount API for scoring a full batch of 150-300 companies
+  at once was on the table when this was still direct-Anthropic; whether
+  OpenRouter exposes an equivalent is unconfirmed and would need checking
+  before relying on it.
 - The scheduled "check YC for new companies" job runs as a **GitHub Actions
   cron**, not a Vercel serverless function — batch-scoring a large batch can
   run long, and Actions doesn't have the timeout constraints a web request
@@ -160,8 +193,10 @@ the real things would behave, so none of this blocked building — but
 `npm run pipeline` (the persisted version) genuinely needs #1 and #2 below
 to do anything:
 
-1. **An Anthropic API key** (console.anthropic.com) — for scoring, founder
-   extraction, and chat.
+1. **An OpenRouter API key** (openrouter.ai/keys) — for scoring, founder
+   extraction, and chat. (An Anthropic key is only needed for the
+   currently-inactive MCP thesis provider — see
+   docs/ARCHITECTURE.md#model-provider.)
 2. **A Postgres database** — Supabase (already connected) or Vercel
    Postgres both work as-is with the schema in `prisma/schema.prisma`. Set
    `DATABASE_URL`, then run `npm run db:generate` once.

@@ -1,15 +1,10 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type OpenAI from "openai";
+import { openrouterClient, toOpenAiTool, MODELS } from "../ai/openrouter";
 import type { PrismaLike } from "../db/prismaLike";
 import { CHAT_TOOLS, dispatchChatTool } from "./tools";
 import { TEAM_GENERAL_RUBRIC, THESIS_FIT_RUBRIC } from "../scoring/rubric";
 
-let _client: Anthropic | null = null;
-function client(): Anthropic {
-  if (!_client) _client = new Anthropic();
-  return _client;
-}
-
-const CHAT_MODEL = "claude-sonnet-5";
+type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
 /**
  * Caps *tool-calling* round trips, not total conversation turns — most
@@ -34,7 +29,7 @@ Every company has been scored 0-10 on two independent rubrics:
 1. Team & General Interest — ${TEAM_GENERAL_RUBRIC.dimensions.map((d) => d.label).join(", ")}.
 2. Activant Thesis Fit — ${THESIS_FIT_RUBRIC.dimensions.map((d) => d.label).join(", ")}.
 
-Every scored company gets exactly one primary category (whichever axis is stronger relative to a qualifying bar) — "secondaryTag: true" means it also genuinely clears the bar on the other axis, without being double-listed. Companies below the bar on both axes have primaryCategory: null and are unranked, but are still stored and searchable. "pass" is "triage" (metadata-only scoring) or "deep_dive" (also checked the company's website and did live web research) — deep_dive scores rest on more evidence.
+Every scored company gets exactly one primary category (whichever axis is stronger) — "secondaryTag: true" means it also genuinely clears a bar on the other axis, without being double-listed. "pass" is "triage" (metadata-only scoring) or "deep_dive" (also checked the company's own website) — deep_dive scores rest on more evidence.
 
 You have tools to query the stored data — use them rather than guessing:
 - list_batches to resolve a batch name to an id, or see what's available
@@ -51,68 +46,67 @@ Call tools until you have enough to answer confidently, then answer in plain, na
  * docs/ARCHITECTURE.md#chat--qa for why this needs no separate
  * "historical batch" mode: querying an old batch works identically to a
  * new one once it's ingested.
- *
- * Not yet live-tested against a real API call (no key in the environment
- * this was built in) — unit-tested here against a mocked Anthropic
- * client, same pattern as scoreDeepDive. Watch, on the first real run,
- * whether MAX_TOOL_TURNS is generous/stingy enough in practice and
- * whether the forced-final-turn fallback ever actually triggers.
  */
 export async function answerChatQuestion(
   db: PrismaLike,
   question: string,
   history: ChatMessageInput[] = []
 ): Promise<string> {
-  const messages: Anthropic.MessageParam[] = [
-    ...history.map((h): Anthropic.MessageParam => ({ role: h.role, content: h.content })),
+  const messages: ChatMessage[] = [
+    { role: "system", content: SYSTEM_PROMPT },
+    ...history.map((h): ChatMessage => ({ role: h.role, content: h.content })),
     { role: "user", content: question },
   ];
 
+  const tools = CHAT_TOOLS.map(toOpenAiTool);
+
   for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
-    const msg = await client().messages.create({
-      model: CHAT_MODEL,
+    const res = await openrouterClient().chat.completions.create({
+      model: MODELS.chat,
       max_tokens: 1500,
-      system: SYSTEM_PROMPT,
-      tools: CHAT_TOOLS,
       messages,
+      tools,
     });
 
-    const toolCalls = msg.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+    const message = res.choices[0]?.message;
+    const toolCalls = message?.tool_calls ?? [];
 
     if (toolCalls.length === 0) {
-      return extractText(msg.content);
+      return extractText(message?.content);
     }
 
-    messages.push({ role: "assistant", content: msg.content });
-    const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
-      toolCalls.map(async (call) => ({
-        type: "tool_result" as const,
-        tool_use_id: call.id,
-        content: JSON.stringify(await dispatchChatTool(db, call.name, call.input)),
-      }))
-    );
-    messages.push({ role: "user", content: toolResults });
+    messages.push(message as ChatMessage);
+    for (const call of toolCalls) {
+      if (call.type !== "function") continue; // custom (non-function) tool calls aren't a shape we ever send
+      const input = parseToolArguments(call.function.arguments);
+      const result = await dispatchChatTool(db, call.function.name, input);
+      messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
+    }
   }
 
   // Hit the turn cap while still wanting to call tools — force a plain-text
   // answer from whatever's already been gathered rather than erroring out.
-  const finalMsg = await client().messages.create({
-    model: CHAT_MODEL,
+  // No `tools` passed here, deliberately, so the model can't keep looping.
+  const finalRes = await openrouterClient().chat.completions.create({
+    model: MODELS.chat,
     max_tokens: 1500,
-    system: SYSTEM_PROMPT,
     messages: [
       ...messages,
       { role: "user", content: "Answer now in plain text using what you've already found — don't call any more tools." },
     ],
   });
-  return extractText(finalMsg.content);
+  return extractText(finalRes.choices[0]?.message?.content);
 }
 
-function extractText(content: Anthropic.ContentBlock[]): string {
-  const text = content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("\n")
-    .trim();
+function parseToolArguments(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+function extractText(content: string | null | undefined): string {
+  const text = (content ?? "").trim();
   return text || "I wasn't able to find a clear answer to that from the stored data.";
 }

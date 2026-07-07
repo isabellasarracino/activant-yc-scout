@@ -27,12 +27,85 @@ bulk batch/company metadata comes from a free, daily-refreshed mirror of
 YC's own search index (not scraped by us directly); founder bios come from
 fetching each company's own YC profile page directly.
 
+## Model provider
+
+**Switched from calling Anthropic directly to OpenRouter's OpenAI-compatible
+endpoint** (`https://openrouter.ai/api/v1`), per explicit product decision —
+not a sandbox workaround, a real choice to reduce dependence on any one
+provider's credit balance running out (the immediate trigger: hitting a
+"credit balance too low" error mid-batch-run). `src/lib/ai/openrouter.ts`
+is the one shared client + tool-call helper every AI call in this codebase
+goes through now, except `mcpProvider.ts` (see below).
+
+**The real tradeoff this forced**: Anthropic's server-side `web_search`
+tool — what the deep-dive scoring pass used to use for live supplementary
+research — has no equivalent on OpenRouter's standard endpoint. Rather than
+building custom search-API plumbing to replicate it, **web search was
+dropped from deep-dive scoring entirely**, per explicit product decision
+(the alternative — keeping deep-dive on a direct Anthropic key while
+everything else moved — was considered and rejected: the user's whole
+reason for switching was to not depend on Anthropic credits, so leaving
+the most evaluative pass on Anthropic would have undercut the point). This
+is a real quality regression worth remembering, not a wash: deep-dive
+scores now rest only on YC metadata + the company's own website, not
+supplementary research a human analyst doing the same job would probably
+do. See [Scoring design](#scoring-design) below for what deep-dive looks
+like now.
+
+**Everything else migrated cleanly** — triage scoring, founder extraction,
+and the chat feature's tool-calling loop don't depend on anything
+Anthropic-specific, just ordinary forced/optional tool use, which OpenRouter
+supports the same way OpenAI's own API does.
+
+**Model slugs are env-overridable** (`OPENROUTER_SCORING_MODEL`,
+`OPENROUTER_EXTRACTION_MODEL`, `OPENROUTER_CHAT_MODEL` — see `.env.example`
+and `MODELS` in `openrouter.ts`) because OpenRouter's exact current slug for
+a given Claude version can shift as new versions ship. Defaults
+(`anthropic/claude-sonnet-5`, `anthropic/claude-haiku-4.5`) matched what was
+confirmed available on OpenRouter via web search at the time this was
+written — **not confirmed by an actual successful API call**, since
+`openrouter.ai` isn't reachable from the sandbox this was built in either
+(same shape of constraint as `binaries.prisma.sh` for Prisma). If a request
+404s with "model not found," check https://openrouter.ai/models and
+override via the env vars.
+
+**Not yet live-tested — this is the biggest unverified change in the
+project so far.** Every file that talks to OpenRouter (`triage.ts`,
+`deepDive.ts`, `companyPage.ts`, `chat/answer.ts`, `ai/openrouter.ts`
+itself) was rewritten and is unit-tested against a mocked `openai` package
+client, exactly the same rigor as everything else — but none of it has
+actually hit `openrouter.ai` for real. Specific things a first real run
+should check, roughly in order of "how likely to actually be wrong":
+1. **The model slugs are exactly right.** This is the most likely thing to
+   need a one-line env-var fix.
+2. **The forced-tool-call response shape matches what `callForcedTool`
+   expects** — i.e. that OpenRouter's Claude routing returns
+   `choices[0].message.tool_calls[0].function.arguments` as a JSON string,
+   the same as OpenAI's own API, rather than something Anthropic-flavored
+   leaking through.
+3. **The chat tool-loop's multi-turn message shape** (assistant messages
+   with `tool_calls`, followed by one `{role: "tool", tool_call_id,
+   content}` message per call) round-trips correctly across several turns,
+   not just one.
+4. **Deep-dive quality, now that web search is gone** — worth an actual
+   look at whether scores/rationales still feel grounded enough without it,
+   or whether the regression matters enough to revisit (see the tradeoff
+   note above).
+
+`mcpProvider.ts` (the currently-inactive Activant Research thesis
+connector) is the one file that stays on the direct Anthropic SDK — its
+MCP connector beta feature has no OpenRouter equivalent, the same shape of
+constraint that took web search off the table for deep-dive. This only
+matters if that connector is ever activated; `ANTHROPIC_API_KEY` isn't
+needed otherwise.
+
 ## Founder extraction
 
-`src/lib/yc/companyPage.ts` sends the fetched YC profile page to Claude
-(Haiku — this is a structuring task, not an evaluative one, so the cheapest
-capable model is the right call) and asks it to return a structured founders
-array, rather than parsing the page with hand-written CSS selectors.
+`src/lib/yc/companyPage.ts` sends the fetched YC profile page to a small,
+fast model (this is a structuring task, not an evaluative one, so the
+cheapest capable model is the right call) via the shared OpenRouter helper
+(`callForcedTool`) and asks it to return a structured founders array,
+rather than parsing the page with hand-written CSS selectors.
 
 Why not selectors: we only ever see *rendered* content, not YC's actual
 DOM/class names, so a selector would be written against a guess. Even a
@@ -44,11 +117,10 @@ it doesn't throw a confusing runtime error, and it keeps working across
 markup changes because it isn't reading markup in the first place.
 
 The tradeoff is real and worth naming: this is slower and costs tokens per
-company, compared to an instant regex match. At Haiku pricing and one call
-per company, this is not the bottleneck for a 150-300 company batch — the
-deep-dive scoring pass dominates cost and latency instead (it uses a bigger
-model plus, sometimes, live web search) — but if that assumption ever stops
-holding, this is the place to revisit it.
+company, compared to an instant regex match. At a small model's pricing and
+one call per company, this is not the bottleneck for a 150-300 company
+batch — the deep-dive scoring pass dominates cost and latency instead — but
+if that assumption ever stops holding, this is the place to revisit it.
 
 The fetch-with-timeout-returning-null pattern itself lives in `src/lib/http.ts`
 (`fetchTextOrNull`, `stripHtmlBoilerplate`), shared between this file and
@@ -70,43 +142,60 @@ plain language:
 **Two passes, to keep a 150-300 company batch fast and affordable:**
 - *Triage pass* (`src/lib/scoring/triage.ts`) — every company, scored on
   both rubrics from YC metadata + founder bios already gathered during
-  ingestion. No external website fetch, no live web search. Cheap and fast
-  enough to run for a whole batch without a second thought. Purpose: sort
-  the batch and decide who gets a deep dive.
+  ingestion. No external website fetch. Cheap and fast enough to run for a
+  whole batch without a second thought. Purpose: sort the batch and decide
+  who gets a deep dive.
 - *Deep-dive pass* (`src/lib/scoring/deepDive.ts`) — only companies that
-  clear a bar on triage (or that a user explicitly asks about). Adds the
-  company's own website (`fetchCompanyWebsite`, same graceful-degradation
-  pattern as the Phase 1 YC-page fetch: null/inaccessible rather than a
-  throw) and gives the model a capped web-search tool (`max_uses: 4`) for
-  open-ended supplementary research, rather than us hardcoding a fixed list
-  of searches to run.
+  clear a bar on triage. Adds the company's own website
+  (`fetchCompanyWebsite`, same graceful-degradation pattern as the Phase 1
+  YC-page fetch: null/inaccessible rather than a throw) to the same prompt
+  shape triage uses.
 
-**Why deep-dive needed a different call shape, not just a flag on triage:**
-triage forces `tool_choice: {type: "tool", name: "record_score"}` — a
-single guaranteed-structured response. Deep-dive can't force that, because
-forcing the tool on the first turn would prevent the model from searching
-*before* answering. So deep-dive leaves tool choice open and instead runs a
-small outer loop: check whether the response includes a `record_score`
-call; if not, push the turn back with an explicit nudge and try again, up
-to a turn cap. In the common case this resolves in one round trip anyway —
-Anthropic's web_search tool resolves multiple search rounds automatically
-within a single request — the loop exists specifically for the case where
-the model finishes without ever calling `record_score`.
+**Both passes are now structurally identical** — one forced
+`tool_choice`-style call to `record_score`, no multi-turn loop — since the
+[OpenRouter migration](#model-provider) dropped deep-dive's live web-search
+tool (an Anthropic-only capability with no equivalent there). Deep-dive
+used to run as an open-ended agentic loop (search zero or more times, then
+call `record_score`, with a turn-cap-and-nudge fallback for when the model
+never got there) specifically *because* it needed to leave room for the
+model to search before answering; once there's nothing left to search
+with, forcing the tool immediately is strictly simpler and just as
+correct. If a future session ever reintroduces some form of web research
+(e.g. an OpenRouter-native search plugin, or custom search-API plumbing),
+expect deep-dive to need the unforced multi-turn shape back.
 
-**Not yet live-tested:** this whole file was built and unit-tested against
-a mocked Anthropic client (no API key in the environment this was built
-in). The multi-turn nudge path in particular is implemented per documented
-server-tool behavior, not verified against a real response. First live run
-is worth watching closely for: (1) whether the common case really does
-resolve in one round trip as expected, (2) whether the nudge message
-reliably gets a `record_score` call on retry, (3) actual per-company
-latency/cost, to sanity-check the `MAX_OUTER_TURNS` and `max_uses` values
-chosen here.
+**A real bug, hit at scale, on real data**, back when this still ran
+against Anthropic directly: running the full Summer 2026 batch (62
+companies) for the first time crashed on company #4 with `Cannot convert
+undefined or null to object` — a malformed/incomplete `record_score` tool
+call reached `buildScoreResult` with `team_general` missing entirely,
+likely from the response getting truncated by hitting `max_tokens` (which
+was 3000, tighter than deep-dive's 4000 at the time). Three fixes, all
+still in place after the OpenRouter migration: `scoreTriage`'s token
+budget raised to 4096; both `triage.ts` and `deepDive.ts` check for a
+truncated finish reason and fail with a specific, diagnosable error rather
+than passing a broken object downstream; `buildScoreResult`
+(`scoreTool.ts`) itself validates `team_general`/`thesis_fit` are present
+before touching them, for the same failure mode from any cause.
 
-Running deep-dive scoring for a whole batch through the **Message Batches
-API** (async, ~half the per-token cost of live calls, supports web
-search/fetch tool use in batch requests) instead of sequential live calls
-is still open — see [Automation](#automation).
+**The bigger fix, independent of root cause:** `runBatchPipeline` used to
+be all-or-nothing — one company's failure aborted the entire run, which on
+a 62-company batch meant losing several already-scored (and already
+paid-for) companies and never attempting the rest. Each company's
+score-and-persist step is now wrapped individually; a failure is logged
+via a `"failed"` progress event and the run continues, returning
+`{processed, failed, failedCompanies}` instead of just a count. The CLI
+(`scripts/run-pipeline.ts`) prints which companies failed and why at the
+end; re-running the same command afterward is safe (upsert-based, no
+duplicates from re-scoring).
+
+**Not yet live-tested (again — same shape of gap, new cause):** the
+scoring logic itself was proven against real data before the provider
+switch (the Summer 2026 batch actually ran, including at least one company
+that completed the old web-search deep-dive path). Since the OpenRouter
+rewrite, none of it has hit a real API — see
+[Model provider](#model-provider) above for exactly what to watch on the
+first real run.
 
 **Unreachable/slow company websites:** the product requirement is explicit —
 score from the YC page alone and note that the site couldn't be reached,
@@ -122,17 +211,29 @@ empty string were meaningful evidence. `scoreDeepDive` carries
 ## Categorization
 
 Every company gets both scores. It's assigned to exactly **one** primary
-category — whichever score is stronger relative to a qualifying bar — never
-both, per the product requirement. If it's genuinely strong on the other axis
-too, that's recorded as `secondaryTag: true` rather than a second listing, so
-the information isn't lost but the two lists stay clean. Companies that clear
-neither bar get `primaryCategory: null` and simply don't show up in either
-list (they're still stored and still answerable via chat/search).
+category — whichever score is stronger — never both, per the product
+requirement. If it's genuinely strong on the other axis too, that's recorded
+as `secondaryTag: true` rather than a second listing, so the information
+isn't lost but the two lists stay clean. Exact ties go to `thesis_fit` (the
+more specific, more actionable signal for sourcing).
 
-The exact qualifying bar (a fixed score threshold vs. a percentile within the
-batch) is a Phase 2 decision once there's real scored data to calibrate
-against — a fixed threshold picked before seeing a single real score is a
-guess.
+**Changed after real data**: this originally had a qualifying bar (6.5/10)
+below which a company got `primaryCategory: null` and didn't appear in
+either headline list — a company had to "clear the bar" to be ranked at
+all. Once there was real scored data to actually look at, the user's
+feedback was direct: every company should be visible and ranked, none
+hidden behind a threshold. `categorize()` (`src/lib/scoring/categorize.ts`)
+now always assigns the stronger axis as primary regardless of its absolute
+value — a 4.0 team score still becomes `team_general` if it beats a 3.0
+thesis score. `secondaryTag` keeps its own independent threshold (still
+6.5, still tunable) so it stays a meaningful "also genuinely strong on the
+other axis" signal rather than becoming true for nearly everyone once the
+qualifying bar was removed. `primaryCategory` is still nullable in the
+type/schema — that now means "not scored yet at all" (no `CompanyScore`
+row), a genuinely different state from "scored, ranked, just lower,"
+and still renders separately (see `categorizeForDisplay` /
+`GET /api/batches/[batch]`'s `unranked` list, which now only ever contains
+not-yet-scored companies).
 
 ## Rubric transparency
 
@@ -142,6 +243,14 @@ opaque number — this is what makes the scoring auditable rather than a black
 box, and mirrors the "compact score, click for the full scorecard" pattern
 already used in Activant's Phase II investment memos, adapted for seed-stage
 evidence instead of a data room.
+
+Every score — composite or per-dimension — is out of 10. The frontend
+displays this explicitly (`src/lib/scoring/format.ts`'s `formatScore`):
+"7/10" for a whole number, "6.8/10" for a fractional one (composite scores
+are weighted averages of the per-dimension scores, so fractions are common
+and real — rounding them all to whole numbers would lose the distinction
+between, say, a 6.8 and a 7.2). Added after the user pointed out a bare
+"7.0" on the page didn't say what scale it was on.
 
 ## Storage
 
@@ -158,14 +267,24 @@ reasons, one general and one specific to how this got built:
 - Specific: `@prisma/client`'s real generated types don't exist until `npx
   prisma generate` has run, and that command needs a schema-engine binary
   from `binaries.prisma.sh` — confirmed directly, by running it, to be a
-  host outside this sandbox's network allowlist. This is independent of
-  Prisma's newer Rust-free "driver adapter" client mode (which the schema
-  now uses — `engineType = "client"` in the generator block, `@prisma/adapter-pg`
-  wired up in `src/lib/db/client.ts`): that mode removes the *runtime* query
-  engine binary, which is a real, worthwhile improvement regardless of this
-  sandbox's constraints, but the `prisma generate` *CLI command itself*
-  still needs the schema engine to parse the `.prisma` file and produce
-  types, and that part isn't avoidable by switching client modes.
+  host outside this sandbox's network allowlist.
+
+**Engine choice — reverted after hitting a real bug on first deployment.**
+This project originally used Prisma's newer WASM-based "client" engine
+(`engineType = "client"` + the `@prisma/adapter-pg` driver adapter), on
+the theory that avoiding a native query-engine binary was strictly
+better. The first real Vercel deployment hit a widely-reported, still-open
+Prisma bug (as of mid-2026): the engine's `query_compiler_bg.wasm` file
+doesn't get bundled correctly by Next.js's automatic file tracing on
+Vercel, failing at runtime with `ENOENT: .../query_compiler_bg.wasm` on
+every database call. `src/lib/db/client.ts` and `prisma/schema.prisma`
+now use Prisma's classic binary Query Engine instead — the older,
+far-more-battle-tested option, and what Vercel's own official Prisma
+guides use — with `binaryTargets = ["native", "rhel-openssl-3.0.x"]` for
+Vercel's Linux serverless runtime. The lesson generalizes: "newer and
+avoids a binary" isn't automatically the safer choice for a solo
+deployment target — the classic engine's maturity mattered more here than
+the WASM mode's theoretical elegance.
 
 Practically: everything in this codebase except `src/lib/db/client.ts` was
 fully typechecked and tested here, against `PrismaLike` and the in-memory
@@ -407,23 +526,24 @@ tools available; if it asks for a tool call, run it and feed the result
 back; repeat until it answers in plain text or `MAX_TOOL_TURNS` (6) is
 hit, in which case one final call is made with tools withheld to force a
 plain-text answer from whatever's already been gathered, rather than
-erroring out. This mirrors `scoreDeepDive`'s outer-loop-plus-nudge shape
-(docs/ARCHITECTURE.md#scoring-design) but adapted: deep-dive nudges the
-model to call the same tool it already had; chat instead caps total
-back-and-forth and forces a final answer, since an unbounded chat tool
-loop is a latency/cost problem a scoring pass isn't.
+erroring out. Unlike `scoreDeepDive` (which forces its one tool
+immediately — see [Scoring design](#scoring-design)), chat genuinely needs
+an open-ended, multi-round loop, since it doesn't know upfront how many
+tool calls a question will take.
 
 Historical batches work identically once ingested/scored — there's no
-separate "history mode." A company that hasn't cleared either category bar
-(`primaryCategory: null`) is still fully searchable and answerable; it
-just doesn't appear in either headline list.
+separate "history mode." Every *scored* company gets a real category (see
+[Categorization](#categorization) — there's no more "below the bar,
+unranked" state); `primaryCategory: null` now means "not scored yet at
+all," and even then the company is still fully searchable and answerable
+via chat.
 
-**Not yet live-tested:** like `scoreDeepDive`, this was built and
-unit-tested against a mocked Anthropic client (`tests/chatAnswer.test.ts`)
-— no API key in the environment this was built in. Watch, on the first
-real run: whether `MAX_TOOL_TURNS` is generous/stingy enough in practice
-for a real multi-step question, and whether the forced-final-turn fallback
-ever actually triggers.
+**Not yet live-tested:** like the rest of the scoring/chat code since the
+[OpenRouter migration](#model-provider), this was built and unit-tested
+against a mocked `openai` client (`tests/chatAnswer.test.ts`) — not a real
+API call. Watch, on the first real run: whether `MAX_TOOL_TURNS` is
+generous/stingy enough in practice for a real multi-step question, and
+whether the forced-final-turn fallback ever actually triggers.
 
 The REST endpoint is `POST /api/chat` (`src/app/api/chat/route.ts`),
 validated with `zod`: `{ message: string, history?: {role, content}[] }` →

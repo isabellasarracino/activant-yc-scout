@@ -20,6 +20,20 @@ export type PipelineProgressEvent =
   | { type: "failed"; company: string; error: string }
   | { type: "done"; count: number; failed: number };
 
+/**
+ * Ingests a batch, triages every company, deep-dives whoever clears the
+ * bar, and persists all of it. This is the one function the CLI
+ * (scripts/run-pipeline.ts), and later the scheduled job (Phase 5), both
+ * call — ingestion/scoring logic lives in exactly one place regardless of
+ * what triggers it.
+ *
+ * One company's scoring failure does NOT abort the run. Learned the hard
+ * way on the real Summer 2026 batch: company #4 of 62 failed with a
+ * malformed model response, and an earlier all-or-nothing version threw
+ * away the 3 already-scored (and already-paid-for) companies and never
+ * attempted the remaining 58. Each company is now caught independently;
+ * a failure is logged via onProgress and the run continues.
+ */
 export async function runBatchPipeline(
   db: PrismaLike,
   batchDisplayName: string,
