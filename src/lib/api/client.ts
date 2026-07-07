@@ -50,6 +50,30 @@ export async function fetchCompanyDetail(slug: string): Promise<CompanyFullDTO> 
   return getJson<CompanyFullDTO>(`/api/companies/${encodeURIComponent(slug)}`);
 }
 
+export interface LatestYcBatch {
+  slug: string;
+  displayName: string;
+  companyCount: number;
+  alreadyEvaluated: boolean;
+}
+
+export async function fetchLatestYcBatch(): Promise<LatestYcBatch> {
+  return getJson<LatestYcBatch>("/api/yc/latest-batch");
+}
+
+export async function evaluateBatch(batchName: string): Promise<{ ok: boolean; message: string }> {
+  const res = await fetch("/api/batches/evaluate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ batchName }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new ApiError(body?.error ?? "Failed to start evaluation.", res.status);
+  }
+  return body as { ok: boolean; message: string };
+}
+
 export async function postChatMessage(message: string, history: ChatMessage[]): Promise<string> {
   const res = await fetch("/api/chat", {
     method: "POST",

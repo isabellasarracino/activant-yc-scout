@@ -5,17 +5,21 @@ Watches new Y Combinator batches, scores every company against two criteria —
 research thesis — and answers questions about any YC company or batch, past
 or present.
 
-**Status: Phase 4b of 5 complete and deployed live**, plus a mid-flight
-provider switch. Ingestion, scoring, persistence, the REST API, chat/RAG,
-the batch dashboard, and the chat UI are all built and were confirmed
-working end-to-end against a real Vercel deployment, real Supabase
-database, and (at the time) a real Anthropic key. Since then, every AI
-call was switched to route through **OpenRouter** instead of Anthropic
-directly (see [docs/ARCHITECTURE.md#model-provider](docs/ARCHITECTURE.md#model-provider))
-— **that switch itself is not yet live-tested**, same caveat as any other
-first run. Only scheduled automation (Phase 5) is left on the original
-roadmap — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full
-roadmap.
+**Status: all core phases complete and deployed live, plus one feature beyond
+the original roadmap.** Ingestion, scoring, persistence, the REST API,
+chat/RAG, the batch dashboard, and the chat UI are all built and confirmed
+working end-to-end against a real Vercel deployment, real Supabase database,
+and (originally) a real Anthropic key. Every AI call has since switched to
+route through **OpenRouter** instead of Anthropic directly (see
+[docs/ARCHITECTURE.md#model-provider](docs/ARCHITECTURE.md#model-provider))
+— **the scoring path is now confirmed working live** on the new provider; chat
+and deep-dive specifically are still pending their first live confirmation.
+Beyond the original roadmap: the dashboard can now trigger evaluation of a
+brand-new YC batch directly from a button, no terminal needed (see
+[docs/ARCHITECTURE.md#website-triggered-evaluation](docs/ARCHITECTURE.md#website-triggered-evaluation))
+— built per direct request, **not yet live-tested**. Only scheduled
+automation (Phase 5) is left on the original roadmap — see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full roadmap.
 
 ## What's here right now
 
@@ -70,7 +74,18 @@ roadmap.
 - `src/app/api/` — the REST + chat endpoints: `GET /api/batches`,
   `GET /api/batches/[batch]`, `GET /api/companies/[slug]`, `POST /api/chat`.
   Read-only by design; ingestion/scoring stays CLI/cron-driven, never
-  triggered from a request handler.
+  triggered from a request handler — except the one guarded exception
+  below.
+- `src/lib/github/dispatch.ts`, `.github/workflows/score-batch.yml`,
+  `GET /api/yc/latest-batch`, `POST /api/batches/evaluate`,
+  `src/components/dashboard/EvaluateBatchBanner.tsx` +
+  `EvaluationProgress.tsx` — website-triggered evaluation: a button on the
+  dashboard that scores a brand-new YC batch via GitHub Actions (real
+  scoring still can't run inside a web request — see
+  docs/ARCHITECTURE.md#website-triggered-evaluation for the full
+  mechanism, needed setup, and why this is a deliberately narrow
+  exception to "no ingestion from a request handler," not a reversal of
+  it).
 - `src/components/dashboard/` — the batch dashboard frontend: `BatchDashboard`
   (top-level, fetches batches + selected batch detail, one combined
   ranked list by total score — see docs/ARCHITECTURE.md#categorization for
@@ -90,11 +105,12 @@ roadmap.
 - `scripts/` — CLIs for ingestion (`ingest-batch.ts`), dry-run scoring
   without a database (`score-batch.ts`), and the full persisted pipeline
   (`run-pipeline.ts`).
-- `tests/` — 172 tests: real captured YC data and mirror fixtures
+- `tests/` — 209 tests: real captured YC data and mirror fixtures
   (`tests/fixtures/`), an in-memory fake database for storage-layer
   tests, a mocked `openai` client for scoring/chat call shapes (routed
-  through OpenRouter), mocked `Request`/DB-client calls for the API routes
-  (`tests/api/`), and React Testing Library + jsdom for every frontend
+  through OpenRouter), mocked `fetch`/`Request`/DB-client calls for the
+  API routes and GitHub dispatch (`tests/api/`, `tests/githubDispatch.test.ts`),
+  and React Testing Library + jsdom for every frontend
   component (`tests/frontend/`) — see docs/ARCHITECTURE.md#frontend for
   why there's no actual browser screenshot to point to yet.
 
@@ -208,3 +224,11 @@ to do anything:
 4. **Clarity on the Activant Research connector's auth** for live thesis
    data (see docs/ARCHITECTURE.md#thesis-source) — not blocking, since
    `ManualThesisProvider` works today with no external auth at all.
+5. **A GitHub Personal Access Token**, only needed for the "Evaluate this
+   batch" button on the dashboard (see
+   docs/ARCHITECTURE.md#website-triggered-evaluation) — set `GITHUB_TOKEN`
+   + `GITHUB_REPOSITORY` in Vercel, and `DATABASE_URL` +
+   `OPENROUTER_API_KEY` *again* as GitHub Actions repository secrets
+   (separate from Vercel's copies — the workflow runs on GitHub's
+   infrastructure). Not needed if you're fine running
+   `npm run pipeline` from a terminal instead.

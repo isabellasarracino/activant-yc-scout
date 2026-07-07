@@ -1,0 +1,44 @@
+name: Score YC Batch
+
+# Two ways this runs:
+# 1. Manually from GitHub's own UI (Actions tab -> Score YC Batch -> Run workflow) —
+#    useful for re-running or backfilling a batch without touching the website at all.
+# 2. Triggered by the website itself (POST /api/batches/evaluate -> GitHub's
+#    workflow-dispatch API -> this workflow) when someone clicks "Evaluate this batch"
+#    for a new YC batch that hasn't been scored yet. See
+#    docs/ARCHITECTURE.md#website-triggered-evaluation for the full mechanism and why
+#    this runs on GitHub Actions rather than as a Vercel serverless function: scoring
+#    150-300 companies takes far longer than a web request is allowed to run.
+#
+# Needs two GitHub Actions repository secrets (Settings -> Secrets and variables ->
+# Actions -> New repository secret) — separate from Vercel's environment variables,
+# since this job runs on GitHub's infrastructure, not Vercel's:
+#   DATABASE_URL       — same Postgres connection string used everywhere else
+#   OPENROUTER_API_KEY — same key used everywhere else
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_name:
+        description: 'YC batch display name, e.g. "Fall 2026"'
+        required: true
+        type: string
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: npm ci
+
+      - name: Run scoring pipeline
+        run: npm run pipeline -- "${{ inputs.batch_name }}"
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}

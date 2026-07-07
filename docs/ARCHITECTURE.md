@@ -10,11 +10,12 @@ future-you) has to reverse-engineer a decision from the code alone.
 |---|---|---|
 | 1 | YC ingestion: batch + company metadata, founder bios | **Done** |
 | 2a | Rubric definitions, triage scoring, categorization, thesis provider abstraction | **Done** |
-| 2b | Deep-dive scoring (company website + live web search) | **Done** |
+| 2b | Deep-dive scoring (company website) | **Done** — originally included live web search too; dropped in the OpenRouter migration, see [Model provider](#model-provider) |
 | 3a | Storage: repository layer, pipeline orchestrator, persistence | **Done** |
 | 3b | REST API endpoints + chat/RAG over stored evidence | **Done** |
 | 4a | Frontend: batch dashboard + expandable rubric cards | **Done** |
-| 4b | Frontend: chat UI | **Done** (this drop) |
+| 4b | Frontend: chat UI | **Done** |
+| — | Website-triggered evaluation: on-demand scoring for a brand-new batch, no terminal needed | **Done** — see [Website-triggered evaluation](#website-triggered-evaluation), not on the original roadmap, added per direct user request |
 | 5 | Automation: scheduled ingestion, deployment config, historical backfill | Next |
 
 Each phase is independently reviewable and testable rather than one large
@@ -230,10 +231,27 @@ thesis score. `secondaryTag` keeps its own independent threshold (still
 other axis" signal rather than becoming true for nearly everyone once the
 qualifying bar was removed. `primaryCategory` is still nullable in the
 type/schema — that now means "not scored yet at all" (no `CompanyScore`
-row), a genuinely different state from "scored, ranked, just lower,"
-and still renders separately (see `categorizeForDisplay` /
+row), a genuinely different state from "scored, ranked, just lower," and
+still renders separately (see `rankCompaniesForDisplay` /
 `GET /api/batches/[batch]`'s `unranked` list, which now only ever contains
 not-yet-scored companies).
+
+**Display grouping changed too, separately from categorization itself**:
+the dashboard used to show two separate lists (Team & General Interest,
+Activant Thesis Fit), each sorted by its own strongest score. It's now one
+combined, ranked list — sorted by `teamGeneralScore + thesisAlignScore`,
+highest first — with `primaryCategory`/`secondaryTag` still shown as a
+badge per card. Per explicit product decision once there was a full
+batch's worth of ranked companies to look at: two separate lists made it
+harder to compare a strong thesis-fit company against a strong
+team-and-general one at a glance, since they never appeared side by side.
+`rankCompaniesForDisplay` (`src/lib/db/repository.ts`) does this ranking;
+`GET /api/batches/[batch]` returns `{ ranked, unranked }`, not the earlier
+`{ teamGeneral, thesisFit, unranked }`. The chat feature's
+`list_top_companies` tool was updated to match (ranks by combined score
+for its default "any category" case, same as the dashboard) — see
+`src/lib/chat/queryTools.ts` — so "what's the best company" means the same
+thing whether asked through the dashboard or the chat.
 
 ## Rubric transparency
 
@@ -331,14 +349,14 @@ JSON-serializable DTOs (`src/lib/api/serialize.ts`) rather than raw DB rows
 (`Date` → ISO string, internal-only fields dropped):
 
 - `GET /api/batches` — every ingested batch.
-- `GET /api/batches/[batch]` — one batch's companies, grouped into
-  `teamGeneral` / `thesisFit` / `unranked` via the same
-  `categorizeForDisplay` the storage layer already uses, so a company
-  showing up in two lists isn't a bug that can independently creep in at
-  the API layer. Each company is the **compact** shape: name, one-liner,
-  both composite scores, category — enough to render a collapsed rubric
-  card for an entire 150-300 company batch without shipping every
-  dimension rationale for every company up front.
+- `GET /api/batches/[batch]` — one batch's companies, as `{ ranked,
+  unranked }` via the same `rankCompaniesForDisplay` the storage layer
+  already uses (ranked by combined score — see
+  [Categorization](#categorization) for why this used to be two separate
+  lists and isn't anymore). Each company is the **compact** shape: name,
+  one-liner, both composite scores, category — enough to render a
+  collapsed rubric card for an entire 150-300 company batch without
+  shipping every dimension rationale for every company up front.
 - `GET /api/companies/[slug]` — one company's **full** shape: everything
   compact has, plus founders (with bios) and the complete per-dimension
   rubric breakdown with rationales. This is the "click to expand" fetch —
@@ -551,18 +569,116 @@ validated with `zod`: `{ message: string, history?: {role, content}[] }` →
 (Phase 4) can carry prior turns; nothing today populates it except a
 caller choosing to.
 
+## Website-triggered evaluation
+
+A manual, on-demand cousin of Phase 5's *scheduled* automation (below):
+clicking "Evaluate this batch" on the dashboard scores a brand-new YC
+batch without anyone touching a terminal. Built per explicit user
+request, scoped deliberately narrow — just the single newest batch, not a
+full historical browser (a much bigger "any batch since 2022" feature was
+discussed and the user explicitly chose to hold off on it, precisely
+because of the setup/cost this feature already needed — see the Decisions
+table in docs/PRIMER.md).
+
+**Why this can't just be an API route that runs the pipeline directly**:
+scoring 150-300 companies takes far longer than a Vercel serverless
+function is allowed to run. The mechanism instead:
+
+1. `GET /api/yc/latest-batch` (`src/app/api/yc/latest-batch/route.ts`)
+   checks the YC mirror directly (not our database) for the chronologically
+   newest batch that exists anywhere, via `findLatestBatch()` in
+   `src/lib/yc/mirror.ts` — this is what lets the dashboard say "Fall 2026
+   just dropped" the moment YC starts showing companies in it, before
+   anyone has ingested anything. `findLatestBatch` parses "<Season>
+   <Year>" out of each display name rather than trusting the mirror's
+   JSON key order (undocumented) or company count (a brand-new batch
+   starts with very few companies, so "most companies" would pick the
+   wrong one — confirmed with real fixture data where "Fall 2026" had 4
+   companies against "Summer 2026"'s 54).
+2. If that batch isn't already in our database, the dashboard shows
+   `EvaluateBatchBanner` (`src/components/dashboard/EvaluateBatchBanner.tsx`).
+   Clicking it calls `POST /api/batches/evaluate`
+   (`src/app/api/batches/evaluate/route.ts`), which checks the batch isn't
+   already evaluated (409 if it is — a lightweight guard against an
+   accidental double-click or refresh triggering a second, fully
+   redundant, real-money batch run) and then calls
+   `dispatchScoreBatchWorkflow()` (`src/lib/github/dispatch.ts`), which
+   asks GitHub's REST API to run `.github/workflows/score-batch.yml` — a
+   `workflow_dispatch`-triggered job that does exactly what
+   `npm run pipeline -- "<batch name>"` does locally, just running on
+   GitHub's infrastructure instead.
+3. The dashboard switches to `EvaluationProgress`
+   (`src/components/dashboard/EvaluationProgress.tsx`), which polls
+   `GET /api/batches/[batch]` (the same endpoint the normal dashboard
+   uses) every 12 seconds and shows a progress bar plus an estimated time
+   remaining. **Deliberately does not ask GitHub about the Actions run's
+   status** — GitHub's workflow-dispatch endpoint returns `204 No Content`
+   with no run ID, so there's no direct way to get "the run that was just
+   created" back from the dispatch call; polling our own database for
+   companies actually appearing answers the question that matters ("is
+   data showing up") more directly than a proxy for it ("did GitHub say
+   the job started"). "Done" is detected as "every company in the batch
+   has been attempted" (`ranked.length + unranked.length >=
+   expectedCompanyCount`), not "zero unranked" — a company that
+   genuinely fails to score stays in `unranked` forever (see
+   [Scoring design](#scoring-design)'s pipeline-resilience story), so
+   waiting for zero would hang forever if anything failed.
+4. The "estimated time remaining" is a real, live-updating estimate
+   (elapsed time so far ÷ companies scored so far × companies remaining),
+   not a fixed guess — it starts from a rough placeholder
+   (`INITIAL_MS_PER_COMPANY_ESTIMATE = 8000`ms) before any real data
+   exists, then replaces it with an actual observed average the moment
+   the first company is scored.
+
+**Setup this needs, beyond what was already configured** — three things,
+none of which overlap with Vercel's environment variables:
+- A GitHub **Personal Access Token**, fine-grained, scoped to just this
+  repo, with "Actions: Read and write" permission — stored as
+  `GITHUB_TOKEN` in **Vercel's** environment variables (this is what lets
+  the website ask GitHub to start the job).
+- `GITHUB_REPOSITORY` ("owner/repo") — also in Vercel's environment
+  variables.
+- `DATABASE_URL` and `OPENROUTER_API_KEY` added *again*, separately, as
+  **GitHub Actions repository secrets** (repo Settings → Secrets and
+  variables → Actions) — not reused from Vercel's copies, since the
+  workflow runs on GitHub's infrastructure and can't read Vercel's
+  environment variables.
+
+**No access control on `POST /api/batches/evaluate`** beyond the
+already-evaluated guard — anyone who can reach the deployed site can
+trigger a real, paid GitHub Actions run once per not-yet-evaluated batch.
+Acceptable for an internal tool passed around a small team; revisit
+(Vercel deployment protection, or a shared-secret check in the route)
+before this is ever exposed more broadly.
+
+**Not yet live-tested** — same as every other first run in this project:
+built and unit-tested against mocked `fetch`/database calls
+(`tests/githubDispatch.test.ts`, `tests/api/latestBatch.test.ts`,
+`tests/api/evaluateBatch.test.ts`, `tests/frontend/EvaluateBatchBanner.test.tsx`,
+`tests/frontend/EvaluationProgress.test.tsx`), never actually hit GitHub's
+real API. Watch on the first real click: whether the PAT's permissions are
+sufficient (a 401/403 from GitHub means the token needs adjusting),
+whether the workflow file is found on the right branch (a 404 means
+checking the `ref: "main"` in `dispatch.ts` matches the actual default
+branch name), and whether the progress estimate feels reasonable once
+real per-company timing is visible.
+
 ## Automation (Phase 5 — not yet built)
 
-Nothing in a Claude conversation or Artifact keeps running once the session
-ends, so "checks YC on its own and alerts you" has to live outside Claude
-entirely. Plan: a scheduled **GitHub Actions workflow** (not a Vercel cron
-hitting a serverless function) runs the ingest → triage → deep-dive pipeline
-directly against the production database on a fixed interval. Actions is the
-right tool here specifically because it doesn't have the request-timeout
-ceiling a serverless function does, and scoring 150-300 companies can
-legitimately take a while. The Next.js app itself stays purely read-side:
-frontend + chat API querying the database, no ingestion logic living in a
-request handler.
+The *scheduled*, unattended cousin of the on-demand feature above: rather
+than someone noticing a new batch and clicking a button, a scheduled
+**GitHub Actions workflow** (not a Vercel cron hitting a serverless
+function, same reasoning as above) checks for and scores new batches
+automatically on a fixed interval. Would reuse the same
+`runBatchPipeline` and likely the same GitHub Actions secrets already set
+up for website-triggered evaluation — the main new piece would be a
+`schedule`-triggered workflow (or a second job in the existing one) that
+first checks whether the latest batch has grown/changed before deciding
+whether to re-run scoring, so it doesn't redundantly re-score an unchanged
+batch every time it runs. The Next.js app itself stays purely read-side
+otherwise: frontend + chat API querying the database, no ingestion logic
+living in a request handler except the one already-guarded trigger point
+described above.
 
 ## Testing philosophy
 

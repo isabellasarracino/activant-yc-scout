@@ -74,6 +74,15 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
   type __Unused = __Check
 }
 
+// Validate ../../src/app/api/batches/evaluate/route.ts
+{
+  type __IsExpected<Specific extends RouteHandlerConfig<"/api/batches/evaluate">> = Specific
+  const handler = {} as typeof import("../../src/app/api/batches/evaluate/route.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
 // Validate ../../src/app/api/batches/route.ts
 {
   type __IsExpected<Specific extends RouteHandlerConfig<"/api/batches">> = Specific
@@ -96,6 +105,15 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
 {
   type __IsExpected<Specific extends RouteHandlerConfig<"/api/companies/[slug]">> = Specific
   const handler = {} as typeof import("../../src/app/api/companies/[slug]/route.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../src/app/api/yc/latest-batch/route.ts
+{
+  type __IsExpected<Specific extends RouteHandlerConfig<"/api/yc/latest-batch">> = Specific
+  const handler = {} as typeof import("../../src/app/api/yc/latest-batch/route.js")
   type __Check = __IsExpected<typeof handler>
   // @ts-ignore
   type __Unused = __Check
