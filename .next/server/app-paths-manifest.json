@@ -1,9 +1,9 @@
 {
-  "/_not-found/page": "app/_not-found/page.js",
   "/api/batches/[batch]/route": "app/api/batches/[batch]/route.js",
-  "/api/batches/evaluate/route": "app/api/batches/evaluate/route.js",
+  "/_not-found/page": "app/_not-found/page.js",
   "/api/batches/route": "app/api/batches/route.js",
   "/api/chat/route": "app/api/chat/route.js",
+  "/api/batches/evaluate/route": "app/api/batches/evaluate/route.js",
   "/api/companies/[slug]/route": "app/api/companies/[slug]/route.js",
   "/api/yc/batches/route": "app/api/yc/batches/route.js",
   "/api/yc/latest-batch/route": "app/api/yc/latest-batch/route.js",
