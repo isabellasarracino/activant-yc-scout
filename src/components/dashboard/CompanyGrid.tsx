@@ -58,6 +58,7 @@ export function CompanyGrid({ title, accent, companies, emptyMessage, rank = fal
             display: "grid",
             gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
             gap: 12,
+            alignItems: "start",
           }}
         >
           {companies.map((c, i) =>
@@ -85,7 +86,7 @@ export function CompanyGrid({ title, accent, companies, emptyMessage, rank = fal
                 >
                   {i + 1}
                 </span>
-                <div style={{ flex: 1, minWidth: 0, display: "flex" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <CompanyCard company={c} />
                 </div>
               </div>

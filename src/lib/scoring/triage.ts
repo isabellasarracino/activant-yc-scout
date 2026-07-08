@@ -34,7 +34,7 @@ ${describeThesis(thesis)}
 
 ${describeRubric(THESIS_FIT_RUBRIC)}
 
-Call record_score with a 0-10 score and rationale for every dimension listed above, plus a normalized primary_vertical label and the overall summary. Keep every rationale to 10 words or fewer (a fragment is fine, a full sentence is not) and the summary to exactly one sentence — brevity is a hard requirement, not a suggestion.`;
+Call record_score with a 0-10 score and rationale for every dimension listed above, plus a primary_vertical chosen from the fixed list in the tool schema (not a free-text label) and the overall summary. Keep every rationale to 10 words or fewer (a fragment is fine, a full sentence is not) and the summary to exactly one sentence — brevity is a hard requirement, not a suggestion.`;
 }
 
 export interface TriageInput {

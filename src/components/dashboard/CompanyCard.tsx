@@ -50,6 +50,7 @@ export function CompanyCard({ company }: CompanyCardProps) {
         border: "1px solid var(--line)",
         borderRadius: 8,
         overflow: "hidden",
+        width: "100%",
         height: "100%",
         display: "flex",
         flexDirection: "column",

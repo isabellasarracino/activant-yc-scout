@@ -4,6 +4,34 @@ import type { RawScoreInput, ScoreResult } from "./types";
 import type { ThesisSnapshot } from "../thesis/types";
 import type { ToolDef } from "../ai/openrouter";
 
+/**
+ * Fixed, broad vertical vocabulary the model must choose from for
+ * `primary_vertical` — deliberately a short, coarse-grained list (not
+ * free text) so companies actually cluster together on the dashboard's
+ * "sort by vertical" view instead of fragmenting into one-off, near-
+ * duplicate labels ("Fintech" vs "Financial Infrastructure" vs "Neobank
+ * Tech" all meaning basically the same thing). Broadly mirrors
+ * Activant's own thesis verticals (see docs/thesis/current.md) plus a
+ * few common YC categories outside Activant's thesis and a catch-all
+ * "Other" — every company gets *some* bucket, never a blank/invented one.
+ * Exported so the dashboard sort control and any future validation can
+ * reference the same canonical list rather than duplicating it.
+ */
+export const VERTICAL_OPTIONS = [
+  "Fintech & Payments",
+  "Commerce Infrastructure",
+  "Supply Chain & Logistics",
+  "Insurance",
+  "Healthcare Infrastructure",
+  "Vertical SaaS",
+  "Developer Tools & Infrastructure",
+  "Consumer & Marketplaces",
+  "Climate & Energy",
+  "Other",
+] as const;
+
+export type VerticalOption = (typeof VERTICAL_OPTIONS)[number];
+
 function dimensionSchema(rubric: Rubric) {
   return {
     type: "object" as const,
@@ -32,7 +60,7 @@ function dimensionSchema(rubric: Rubric) {
 export function buildScoreTool(): ToolDef {
   return {
     name: "record_score",
-    description: "Record dimension-by-dimension scores for both evaluation criteria, plus a normalized vertical label and a short overall summary.",
+    description: "Record dimension-by-dimension scores for both evaluation criteria, plus a vertical from the fixed list and a short overall summary.",
     input_schema: {
       type: "object",
       properties: {
@@ -40,8 +68,9 @@ export function buildScoreTool(): ToolDef {
         thesis_fit: dimensionSchema(THESIS_FIT_RUBRIC),
         primary_vertical: {
           type: "string",
+          enum: [...VERTICAL_OPTIONS],
           description:
-            "A single, normalized industry/vertical label for this company, e.g. 'Fintech', 'Healthcare', 'Supply Chain', 'Insurance', 'Vertical SaaS', 'Payments', 'Logistics', 'Climate', 'Developer Tools'. Pick the single best-fitting label from the company's actual business (not a raw copy of its YC tags) — prefer a well-known vertical name a growth-equity analyst would recognize over a narrow or invented one.",
+            `Pick exactly one value from this fixed list — do not invent a new label, do not combine two, do not copy the company's raw YC tags verbatim: ${VERTICAL_OPTIONS.join(", ")}. These are deliberately broad so companies cluster together; if a company could plausibly fit two, pick whichever is the closer match. Use "Other" only when truly none of the rest fit.`,
         },
         summary: {
           type: "string",
@@ -79,13 +108,21 @@ export function buildScoreResult(raw: RawScoreInput, pass: "triage" | "deep_dive
   const thesisAlignScore = compositeScore(THESIS_FIT_RUBRIC, thesisScores);
   const { primaryCategory, secondaryTag } = categorize(teamGeneralScore, thesisAlignScore);
 
+  // Defensive fallback: if the model ever returns something outside the
+  // fixed list despite the enum constraint (a malformed/older client,
+  // a model that ignores enum hints), don't let a stray label silently
+  // create a new one-off vertical bucket on the dashboard — file it
+  // under "Other" instead of trusting raw output here.
+  const rawVertical = raw.primary_vertical;
+  const primaryVertical: string = (VERTICAL_OPTIONS as readonly string[]).includes(rawVertical) ? rawVertical : "Other";
+
   return {
     pass,
     teamGeneralScore,
     thesisAlignScore,
     primaryCategory,
     secondaryTag,
-    primaryVertical: raw.primary_vertical || "Uncategorized",
+    primaryVertical,
     summary: raw.summary,
     rubricBreakdown: {
       team_general: TEAM_GENERAL_RUBRIC.dimensions.map((d) => ({
