@@ -50,6 +50,9 @@ export function CompanyCard({ company }: CompanyCardProps) {
         border: "1px solid var(--line)",
         borderRadius: 8,
         overflow: "hidden",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
       }}
     >
       <button
@@ -65,10 +68,11 @@ export function CompanyCard({ company }: CompanyCardProps) {
           display: "flex",
           flexDirection: "column",
           gap: 10,
+          flex: expanded ? "0 0 auto" : "1 1 auto",
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-          <div style={{ minWidth: 0 }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
             <h3
               style={{
                 fontFamily: "var(--font-display)",
@@ -76,11 +80,30 @@ export function CompanyCard({ company }: CompanyCardProps) {
                 fontWeight: 600,
                 margin: 0,
                 color: "var(--ink)",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
               }}
+              title={company.name}
             >
               {company.name}
             </h3>
-            <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--ink-muted)" }}>{company.oneLiner}</p>
+            <p
+              style={{
+                margin: "4px 0 0",
+                fontSize: 13,
+                color: "var(--ink-muted)",
+                minHeight: "2.6em",
+                lineHeight: 1.3,
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+              }}
+              title={company.oneLiner}
+            >
+              {company.oneLiner}
+            </p>
           </div>
           <span
             aria-hidden
@@ -99,7 +122,7 @@ export function CompanyCard({ company }: CompanyCardProps) {
           </span>
         </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginTop: "auto" }}>
           <CategoryBadge category={company.primaryCategory} secondaryTag={company.secondaryTag} />
           <ScoreBars
             teamGeneralScore={company.teamGeneralScore}

@@ -62,7 +62,7 @@ export function CompanyGrid({ title, accent, companies, emptyMessage, rank = fal
         >
           {companies.map((c, i) =>
             rank ? (
-              <div key={c.slug} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+              <div key={c.slug} style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
                 <span
                   aria-hidden
                   title={`Rank ${i + 1} of ${companies.length}`}
@@ -85,7 +85,7 @@ export function CompanyGrid({ title, accent, companies, emptyMessage, rank = fal
                 >
                   {i + 1}
                 </span>
-                <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ flex: 1, minWidth: 0, display: "flex" }}>
                   <CompanyCard company={c} />
                 </div>
               </div>
