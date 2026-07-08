@@ -21,9 +21,14 @@ type LoadState = "loading" | "ready" | "error";
  * the same already-fetched `detail.ranked` array client-side -- no extra
  * API call, since every field each mode needs (teamGeneralScore,
  * thesisAlignScore, primaryCategory, primaryVertical) is already on
- * CompanyCompactDTO. "combined" mirrors the server's own
- * rankCompaniesForDisplay ordering; the other three filter and/or
- * re-sort it.
+ * CompanyCompactDTO.
+ *
+ * Ranking within every mode is always by combined score (team + thesis)
+ * -- "team_general"/"thesis_fit" filter to that category but don't
+ * re-rank by the single axis, and "vertical" groups into per-vertical
+ * headings with combined-score ranking inside each group. Combined score
+ * is the one consistent ranking signal across the whole dashboard; only
+ * *which companies show* and *how they're grouped* changes per mode.
  */
 type SortMode = "combined" | "team_general" | "thesis_fit" | "vertical";
 
@@ -34,27 +39,51 @@ const SORT_LABELS: Record<SortMode, string> = {
   vertical: "By vertical",
 };
 
-function applySortMode(companies: CompanyCompactDTO[], mode: SortMode): CompanyCompactDTO[] {
-  if (mode === "combined") return companies;
+function combinedScore(c: CompanyCompactDTO): number {
+  return (c.teamGeneralScore ?? 0) + (c.thesisAlignScore ?? 0);
+}
 
-  if (mode === "team_general" || mode === "thesis_fit") {
-    return companies
-      .filter((c) => c.primaryCategory === mode)
-      .sort((a, b) =>
-        mode === "team_general"
-          ? (b.teamGeneralScore ?? 0) - (a.teamGeneralScore ?? 0)
-          : (b.thesisAlignScore ?? 0) - (a.thesisAlignScore ?? 0)
-      );
+/** Filters to one category, ranked by combined score (not the single axis) -- combined score is the one consistent ranking signal across every view. */
+function filterByCategory(companies: CompanyCompactDTO[], category: "team_general" | "thesis_fit"): CompanyCompactDTO[] {
+  return companies.filter((c) => c.primaryCategory === category).sort((a, b) => combinedScore(b) - combinedScore(a));
+}
+
+export interface VerticalGroup {
+  vertical: string;
+  companies: CompanyCompactDTO[];
+}
+
+/**
+ * Groups companies by their model-extracted `primaryVertical` (e.g.
+ * "Fintech", "Healthcare") -- each company's vertical was decided
+ * individually at scoring time (src/lib/scoring/scoreTool.ts), this just
+ * clusters the results. Verticals are ordered alphabetically for a
+ * stable, predictable heading order; companies inside each vertical are
+ * ranked by combined score descending, same as every other view.
+ * Unlabeled companies (scored before this field existed) are grouped
+ * under "Unlabeled" and sorted last.
+ */
+function groupByVertical(companies: CompanyCompactDTO[]): VerticalGroup[] {
+  const buckets = new Map<string, CompanyCompactDTO[]>();
+  for (const c of companies) {
+    const key = c.primaryVertical ?? "Unlabeled";
+    const list = buckets.get(key) ?? [];
+    list.push(c);
+    buckets.set(key, list);
   }
 
-  // vertical: group alphabetically by vertical, highest combined score first within each group
-  const combined = (c: CompanyCompactDTO) => (c.teamGeneralScore ?? 0) + (c.thesisAlignScore ?? 0);
-  return [...companies].sort((a, b) => {
-    const va = a.primaryVertical ?? "\uffff"; // unlabeled sorts last
-    const vb = b.primaryVertical ?? "\uffff";
-    if (va !== vb) return va.localeCompare(vb);
-    return combined(b) - combined(a);
+  const groups = Array.from(buckets.entries()).map(([vertical, list]) => ({
+    vertical,
+    companies: [...list].sort((a, b) => combinedScore(b) - combinedScore(a)),
+  }));
+
+  groups.sort((a, b) => {
+    if (a.vertical === "Unlabeled") return 1;
+    if (b.vertical === "Unlabeled") return -1;
+    return a.vertical.localeCompare(b.vertical);
   });
+
+  return groups;
 }
 
 /**
@@ -160,7 +189,39 @@ export function BatchDashboard() {
     if (finishedSlug) loadDetail(finishedSlug);
   }
 
-  const sortedRanked = useMemo(() => (detail ? applySortMode(detail.ranked, sortMode) : []), [detail, sortMode]);
+  const filteredRanked = useMemo(() => {
+    if (!detail) return [];
+    if (sortMode === "team_general" || sortMode === "thesis_fit") return filterByCategory(detail.ranked, sortMode);
+    return detail.ranked; // "combined" -- already sorted by combined score server-side
+  }, [detail, sortMode]);
+
+  const verticalGroups = useMemo(() => (detail && sortMode === "vertical" ? groupByVertical(detail.ranked) : []), [detail, sortMode]);
+
+  const sortControl = (
+    <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--ink-muted)" }}>
+      Sort:
+      <select
+        value={sortMode}
+        onChange={(e) => setSortMode(e.target.value as SortMode)}
+        style={{
+          fontFamily: "var(--font-body)",
+          fontSize: 12.5,
+          color: "var(--ink)",
+          background: "var(--surface)",
+          border: "1px solid var(--line)",
+          borderRadius: 6,
+          padding: "4px 8px",
+          cursor: "pointer",
+        }}
+      >
+        {(Object.keys(SORT_LABELS) as SortMode[]).map((mode) => (
+          <option key={mode} value={mode}>
+            {SORT_LABELS[mode]}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 
   if (ycBatchesState === "loading") {
     return <p style={{ color: "var(--ink-muted)", fontSize: 14 }}>Loading batches…</p>;
@@ -216,38 +277,38 @@ export function BatchDashboard() {
 
       {!evaluating && detail && detailState === "ready" && (
         <>
-          <CompanyGrid
-            title="All Companies"
-            accent="var(--ink)"
-            companies={sortedRanked}
-            emptyMessage={sortMode === "combined" ? "No companies have been scored yet." : "No companies match this sort."}
-            rank={sortMode === "combined"}
-            headerControls={
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--ink-muted)" }}>
-                Sort:
-                <select
-                  value={sortMode}
-                  onChange={(e) => setSortMode(e.target.value as SortMode)}
-                  style={{
-                    fontFamily: "var(--font-body)",
-                    fontSize: 12.5,
-                    color: "var(--ink)",
-                    background: "var(--surface)",
-                    border: "1px solid var(--line)",
-                    borderRadius: 6,
-                    padding: "4px 8px",
-                    cursor: "pointer",
-                  }}
-                >
-                  {(Object.keys(SORT_LABELS) as SortMode[]).map((mode) => (
-                    <option key={mode} value={mode}>
-                      {SORT_LABELS[mode]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            }
-          />
+          {sortMode === "vertical" ? (
+            <section style={{ marginBottom: 32 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+                <h2 style={{ fontFamily: "var(--font-display)", fontSize: 19, fontWeight: 600, margin: 0, color: "var(--ink)" }}>
+                  All Companies
+                </h2>
+                {sortControl}
+              </div>
+              {verticalGroups.length === 0 && (
+                <p style={{ fontSize: 13, color: "var(--ink-muted)", fontStyle: "italic" }}>No companies have been scored yet.</p>
+              )}
+              {verticalGroups.map((group) => (
+                <CompanyGrid
+                  key={group.vertical}
+                  title={group.vertical}
+                  accent="var(--thesis)"
+                  companies={group.companies}
+                  emptyMessage=""
+                  rank
+                />
+              ))}
+            </section>
+          ) : (
+            <CompanyGrid
+              title="All Companies"
+              accent="var(--ink)"
+              companies={filteredRanked}
+              emptyMessage={sortMode === "combined" ? "No companies have been scored yet." : "No companies match this sort."}
+              rank
+              headerControls={sortControl}
+            />
+          )}
           {detail.unranked.length > 0 && (
             <details>
               <summary
