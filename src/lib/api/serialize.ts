@@ -46,6 +46,8 @@ export interface CompanyCompactDTO {
   batchId: string;
   primaryCategory: "team_general" | "thesis_fit" | null;
   secondaryTag: boolean;
+  /** Normalized single-label vertical extracted by the model (e.g. "Fintech"), null until scored. Powers the dashboard's sort-by-vertical control. */
+  primaryVertical: string | null;
   teamGeneralScore: number | null;
   thesisAlignScore: number | null;
   pass: "triage" | "deep_dive" | null;
@@ -65,6 +67,7 @@ export function serializeCompanyCompact(c: CompanyWithRelations): CompanyCompact
     batchId: c.batchId,
     primaryCategory: c.score?.primaryCategory ?? null,
     secondaryTag: c.score?.secondaryTag ?? false,
+    primaryVertical: c.score?.primaryVertical ?? null,
     teamGeneralScore: c.score?.teamGeneralScore ?? null,
     thesisAlignScore: c.score?.thesisAlignScore ?? null,
     pass: c.score?.pass ?? null,

@@ -13,6 +13,8 @@ export interface ScoreResult {
   thesisAlignScore: number;
   primaryCategory: PrimaryCategory;
   secondaryTag: boolean;
+  /** Normalized single-label vertical extracted from evidence, e.g. "Fintech", "Healthcare", "Supply Chain". */
+  primaryVertical: string;
   summary: string;
   rubricBreakdown: {
     team_general: DimensionScore[];
@@ -26,5 +28,6 @@ export interface ScoreResult {
 export interface RawScoreInput {
   team_general: Record<string, { score: number; rationale: string }>;
   thesis_fit: Record<string, { score: number; rationale: string }>;
+  primary_vertical: string;
   summary: string;
 }

@@ -125,13 +125,23 @@ function CompanyFullDetail({ detail }: { detail: CompanyFullDTO }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {detail.summary && <p style={{ margin: 0, fontSize: 13, fontStyle: "italic", color: "var(--ink)" }}>{detail.summary}</p>}
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px", fontSize: 12, color: "var(--ink-muted)" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 16px", fontSize: 12, color: "var(--ink-muted)" }}>
         {detail.website && (
-          <a href={detail.website} target="_blank" rel="noreferrer">
+          <a
+            href={detail.website}
+            target="_blank"
+            rel="noreferrer"
+            style={{ fontSize: 14, fontWeight: 700, color: "var(--team)", textDecoration: "underline" }}
+          >
             {detail.website.replace(/^https?:\/\//, "")}
           </a>
         )}
-        <a href={detail.ycUrl} target="_blank" rel="noreferrer">
+        <a
+          href={detail.ycUrl}
+          target="_blank"
+          rel="noreferrer"
+          style={{ fontSize: 14, fontWeight: 700, color: "var(--team)", textDecoration: "underline" }}
+        >
           YC profile
         </a>
         {detail.teamSize !== null && <span>{detail.teamSize} team members</span>}

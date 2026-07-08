@@ -112,6 +112,7 @@ export async function upsertScore(
         thesisAlignScore: score.thesisAlignScore,
         primaryCategory: score.primaryCategory,
         secondaryTag: score.secondaryTag,
+        primaryVertical: score.primaryVertical,
         rubricBreakdown: score.rubricBreakdown as unknown,
         summary: score.summary,
         thesisVersionId: null, // wired up once ThesisVersion rows are persisted — see docs/ARCHITECTURE.md#storage
@@ -123,6 +124,7 @@ export async function upsertScore(
         thesisAlignScore: score.thesisAlignScore,
         primaryCategory: score.primaryCategory,
         secondaryTag: score.secondaryTag,
+        primaryVertical: score.primaryVertical,
         rubricBreakdown: score.rubricBreakdown as unknown,
         summary: score.summary,
         scoredAt: new Date(),
@@ -183,6 +185,14 @@ export interface RankedCompanies {
  * docs/ARCHITECTURE.md#categorization for that earlier removal), so the
  * only reason left for a company not to have a combined-score rank is
  * genuinely not having been scored yet.
+ *
+ * The combined-score order here is the default display order; the
+ * dashboard's sort control (BatchDashboard.tsx) re-sorts/filters this
+ * same `ranked` array client-side for the other view modes (team-only,
+ * thesis-only, by vertical) rather than this function producing multiple
+ * orderings — every company here already carries every field those views
+ * need (teamGeneralScore, thesisAlignScore, primaryCategory,
+ * primaryVertical), so a second server round-trip isn't warranted.
  */
 export function rankCompaniesForDisplay(companies: CompanyWithRelations[]): RankedCompanies {
   const combinedScore = (c: CompanyWithRelations) => (c.score?.teamGeneralScore ?? 0) + (c.score?.thesisAlignScore ?? 0);

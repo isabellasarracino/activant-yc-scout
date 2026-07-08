@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { CompanyCompactDTO } from "../../lib/api/serialize";
 import { CompanyCard } from "./CompanyCard";
 
@@ -7,34 +8,39 @@ interface CompanyGridProps {
   companies: CompanyCompactDTO[];
   emptyMessage: string;
   /**
-   * Companies arriving here are already sorted descending by combined
-   * score (team + thesis) — `rankCompaniesForDisplay`
-   * (src/lib/db/repository.ts) does this server-side. `rank` just makes
-   * that order visible on the page itself (a "#1" badge + a caption)
-   * rather than leaving it implicit; it doesn't re-sort anything here,
-   * since re-sorting client-side could silently drift from the server's
-   * actual ordering logic.
+   * Companies arriving here are already sorted/filtered by the caller
+   * (BatchDashboard applies the sort-mode control before passing
+   * `companies` down) — this component just renders whatever order it's
+   * given, plus the "#N" rank badge when `rank` is set. It doesn't
+   * re-sort anything itself, since re-sorting here could silently drift
+   * from whichever ordering the caller actually intends for the current
+   * sort mode.
    */
   rank?: boolean;
+  /** Rendered inline next to the title/count — e.g. the sort-mode dropdown. */
+  headerControls?: ReactNode;
 }
 
-export function CompanyGrid({ title, accent, companies, emptyMessage, rank = false }: CompanyGridProps) {
+export function CompanyGrid({ title, accent, companies, emptyMessage, rank = false, headerControls }: CompanyGridProps) {
   return (
     <section style={{ marginBottom: 32 }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
-        <span aria-hidden style={{ width: 8, height: 8, borderRadius: 2, background: accent, flexShrink: 0 }} />
-        <h2
-          style={{
-            fontFamily: "var(--font-display)",
-            fontSize: 19,
-            fontWeight: 600,
-            margin: 0,
-            color: "var(--ink)",
-          }}
-        >
-          {title}
-        </h2>
-        <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-muted)" }}>{companies.length}</span>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+          <span aria-hidden style={{ width: 8, height: 8, borderRadius: 2, background: accent, flexShrink: 0 }} />
+          <h2
+            style={{
+              fontFamily: "var(--font-display)",
+              fontSize: 19,
+              fontWeight: 600,
+              margin: 0,
+              color: "var(--ink)",
+            }}
+          >
+            {title}
+          </h2>
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-muted)" }}>{companies.length}</span>
+        </div>
+        {headerControls}
       </div>
 
       {rank && companies.length > 0 && (

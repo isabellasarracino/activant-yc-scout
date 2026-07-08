@@ -11,6 +11,12 @@
 // - `primaryCategory` is a single value (not a list) because the product
 //   requirement is "decide one bucket, don't double-list" — see
 //   docs/ARCHITECTURE.md#categorization.
+// - `primaryVertical` is a normalized, single-label vertical (e.g.
+//   "Fintech", "Healthcare", "Supply Chain") the model extracts as part of
+//   the same scoring call, not raw YC `industries`/`tags` — those are
+//   often messy/multi-valued and unsuited to a clean sort/filter control.
+//   Lives on CompanyScore (not Company) because it's a judgment call
+//   derived from analysis, same reasoning as everything else here.
 
 generator client {
   provider      = "prisma-client-js"
@@ -91,6 +97,14 @@ model CompanyScore {
 
   primaryCategory Category? // null = below the bar for both
   secondaryTag    Boolean   @default(false) // strong on the *other* axis too, noted not double-listed
+
+  /// Normalized single-label vertical extracted by the model from YC page
+  /// content (e.g. "Fintech", "Healthcare", "Supply Chain") — distinct
+  /// from Company.industries/tags, which are YC's own raw, often
+  /// multi-valued labels. Powers the dashboard's "sort by vertical"
+  /// control. Nullable because older rows scored before this field
+  /// existed won't have it until re-scored.
+  primaryVertical String?
 
   /// Full per-dimension breakdown + rationale, e.g.
   /// { "team_general": [{ "dimension": "founder_market_fit", "score": 8, "rationale": "..." }, ...],

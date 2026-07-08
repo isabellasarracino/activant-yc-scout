@@ -17,7 +17,7 @@ function dimensionSchema(rubric: Rubric) {
             rationale: {
               type: "string",
               description:
-                "1-3 sentences, grounded in specific evidence from what was provided. No generic filler — if evidence is thin, say so. Paraphrase findings in your own words rather than quoting sources at length; name where a specific claim came from (e.g. 'per the company's site' or 'per a 2026 TechCrunch piece') so it's checkable.",
+                "10 words or fewer. A fragment, not a full sentence — e.g. 'Ex-Stripe eng, no fintech GTM hire yet.' Grounded in one specific, checkable fact; no filler, no hedging language. If evidence is genuinely absent, write 'No evidence available' and score conservatively.",
             },
           },
           required: ["score", "rationale"],
@@ -32,18 +32,24 @@ function dimensionSchema(rubric: Rubric) {
 export function buildScoreTool(): ToolDef {
   return {
     name: "record_score",
-    description: "Record dimension-by-dimension scores for both evaluation criteria, plus a short overall summary.",
+    description: "Record dimension-by-dimension scores for both evaluation criteria, plus a normalized vertical label and a short overall summary.",
     input_schema: {
       type: "object",
       properties: {
         team_general: dimensionSchema(TEAM_GENERAL_RUBRIC),
         thesis_fit: dimensionSchema(THESIS_FIT_RUBRIC),
+        primary_vertical: {
+          type: "string",
+          description:
+            "A single, normalized industry/vertical label for this company, e.g. 'Fintech', 'Healthcare', 'Supply Chain', 'Insurance', 'Vertical SaaS', 'Payments', 'Logistics', 'Climate', 'Developer Tools'. Pick the single best-fitting label from the company's actual business (not a raw copy of its YC tags) — prefer a well-known vertical name a growth-equity analyst would recognize over a narrow or invented one.",
+        },
         summary: {
           type: "string",
-          description: "2-3 sentence overall take, naming the single strongest and single weakest point.",
+          description:
+            "Exactly one sentence — the single most important overall takeaway. No more than one sentence, no matter how much there is to say.",
         },
       },
-      required: ["team_general", "thesis_fit", "summary"],
+      required: ["team_general", "thesis_fit", "primary_vertical", "summary"],
     },
   };
 }
@@ -79,6 +85,7 @@ export function buildScoreResult(raw: RawScoreInput, pass: "triage" | "deep_dive
     thesisAlignScore,
     primaryCategory,
     secondaryTag,
+    primaryVertical: raw.primary_vertical || "Uncategorized",
     summary: raw.summary,
     rubricBreakdown: {
       team_general: TEAM_GENERAL_RUBRIC.dimensions.map((d) => ({
