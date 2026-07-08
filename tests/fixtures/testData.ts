@@ -47,6 +47,7 @@ export function fullRawScore(
     thesis_fit: Object.fromEntries(
       THESIS_DIMS.map((k) => [k, { score: overrides.thesisScores?.[k] ?? 7, rationale: `Rationale for ${k}` }])
     ),
+    primary_vertical: "Fintech",
     summary: "Strong fintech infra play with a credible technical founder.",
   };
 }

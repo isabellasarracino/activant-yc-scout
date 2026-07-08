@@ -23,6 +23,7 @@ export interface CompanyScoreRow {
   thesisAlignScore: number | null;
   primaryCategory: "team_general" | "thesis_fit" | null;
   secondaryTag: boolean;
+  primaryVertical: string | null;
   rubricBreakdown: unknown;
   summary: string | null;
   thesisVersionId: string | null;

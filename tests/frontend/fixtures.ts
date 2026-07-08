@@ -21,6 +21,7 @@ export const sampleCompactCompany: CompanyCompactDTO = {
   batchId: "summer-2026",
   primaryCategory: "thesis_fit",
   secondaryTag: false,
+  primaryVertical: "Fintech",
   teamGeneralScore: 6.2,
   thesisAlignScore: 8.4,
   pass: "deep_dive",
