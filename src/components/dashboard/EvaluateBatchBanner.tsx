@@ -5,19 +5,26 @@ import { evaluateBatch, ApiError } from "../../lib/api/client";
 
 interface EvaluateBatchBannerProps {
   displayName: string;
-  companyCount: number;
+  /** How many companies would actually get scored by clicking the button — the full mirror count for a first-time evaluation, or just the new ones for a refresh. */
+  newCompanyCount: number;
+  /** true = never evaluated at all; false = already evaluated, this many are new since last time. */
+  isFirstEvaluation: boolean;
   onStarted: () => void;
 }
 
 /**
- * Shown when the mirror reports a newer YC batch than anything in our own
- * database — see GET /api/yc/latest-batch. Clicking the button asks
- * GitHub Actions to run the scoring pipeline (POST /api/batches/evaluate
- * -> src/lib/github/dispatch.ts), since scoring a whole batch takes far
- * longer than this website is allowed to keep a request open. See
- * docs/ARCHITECTURE.md#website-triggered-evaluation.
+ * Shown for any batch (Summer 2026 onward — see GET /api/yc/batches) that
+ * either hasn't been evaluated at all, or has grown since it was last
+ * evaluated. Works the same way either way: clicking the button asks
+ * GitHub Actions to run the scoring pipeline
+ * (POST /api/batches/evaluate -> src/lib/github/dispatch.ts), since
+ * scoring a batch takes far longer than this website is allowed to keep
+ * a request open, and the pipeline itself only ever scores companies it
+ * hasn't seen before (see docs/ARCHITECTURE.md#scoring-design) — so
+ * re-clicking this for an already-evaluated batch is cheap and safe, not
+ * a full re-score.
  */
-export function EvaluateBatchBanner({ displayName, companyCount, onStarted }: EvaluateBatchBannerProps) {
+export function EvaluateBatchBanner({ displayName, newCompanyCount, isFirstEvaluation, onStarted }: EvaluateBatchBannerProps) {
   const [state, setState] = useState<"idle" | "starting" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
 
@@ -32,6 +39,8 @@ export function EvaluateBatchBanner({ displayName, companyCount, onStarted }: Ev
       setState("error");
     }
   }
+
+  const companyWord = newCompanyCount === 1 ? "company" : "companies";
 
   return (
     <div
@@ -49,10 +58,21 @@ export function EvaluateBatchBanner({ displayName, companyCount, onStarted }: Ev
       }}
     >
       <div>
-        <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>
-          {displayName} just dropped — {companyCount} compan{companyCount === 1 ? "y" : "ies"} so far
-        </p>
-        <p style={{ margin: "2px 0 0", fontSize: 12.5, color: "var(--ink-muted)" }}>Scout hasn&apos;t looked at this batch yet.</p>
+        {isFirstEvaluation ? (
+          <>
+            <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>
+              {displayName} — {newCompanyCount} {companyWord} so far
+            </p>
+            <p style={{ margin: "2px 0 0", fontSize: 12.5, color: "var(--ink-muted)" }}>Scout hasn&apos;t looked at this batch yet.</p>
+          </>
+        ) : (
+          <>
+            <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>
+              {displayName} has {newCompanyCount} new {companyWord}
+            </p>
+            <p style={{ margin: "2px 0 0", fontSize: 12.5, color: "var(--ink-muted)" }}>Since Scout last checked this batch.</p>
+          </>
+        )}
         {error && <p style={{ margin: "6px 0 0", fontSize: 12.5, color: "var(--danger)" }}>{error}</p>}
       </div>
       <button

@@ -14,10 +14,16 @@ route through **OpenRouter** instead of Anthropic directly (see
 [docs/ARCHITECTURE.md#model-provider](docs/ARCHITECTURE.md#model-provider))
 — **the scoring path is now confirmed working live** on the new provider; chat
 and deep-dive specifically are still pending their first live confirmation.
-Beyond the original roadmap: the dashboard can now trigger evaluation of a
-brand-new YC batch directly from a button, no terminal needed (see
+Beyond the original roadmap: the dashboard can now trigger evaluation of
+any batch from Summer 2026 onward directly from a button — including
+re-checking a batch that's already been evaluated once it grows, without
+ever re-scoring a company twice (see
 [docs/ARCHITECTURE.md#website-triggered-evaluation](docs/ARCHITECTURE.md#website-triggered-evaluation))
-— built per direct request, **not yet live-tested**. Only scheduled
+— built per direct request, **not yet live-tested**. Scoring itself also
+got more resilient this session: a failed triage call retries once, then
+falls back to a full deep-dive attempt, so a company shouldn't need a
+second pipeline run to end up ranked (see
+docs/ARCHITECTURE.md#scoring-design). Only scheduled
 automation (Phase 5) is left on the original roadmap — see
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full roadmap.
 
@@ -58,10 +64,18 @@ automation (Phase 5) is left on the original roadmap — see
   that needs `prisma generate` run before it compiles, and why it's not
   the newer WASM engine mode).
 - `src/lib/pipeline/runBatchPipeline.ts` — the single function tying
-  ingestion, both scoring passes, and persistence together. Resilient to a
-  single company's scoring failure (logs it via a `"failed"` progress event
-  and keeps going) rather than aborting the whole batch run — see
-  docs/ARCHITECTURE.md#scoring-design for the real incident that drove this.
+  ingestion, both scoring passes, and persistence together. A company
+  shouldn't need a second pipeline run to end up ranked: a failed triage
+  call gets one retry, then falls back to deep-dive directly; if deep-dive
+  is the one that fails after triage already succeeded, the good triage
+  score is used instead of leaving the company with nothing (see
+  `src/lib/retry.ts` and docs/ARCHITECTURE.md#scoring-design). One
+  company's failure never aborts the whole run — logged via a `"failed"`
+  progress event and the batch continues. Also skips companies that
+  already have a score by default (a batch keeps admitting companies for
+  weeks after it's announced, so re-running to pick up new ones shouldn't
+  re-pay for everyone already scored) — pass `--rescore` to force a full
+  re-score anyway.
 - `src/lib/chat/` — the chat/Q&A layer: `queryTools.ts` (search, top-companies,
   full-detail, list-batches — pure DB queries, no AI-provider dependency),
   `tools.ts` (provider-agnostic tool schemas + dispatcher), and `answer.ts`
@@ -77,23 +91,27 @@ automation (Phase 5) is left on the original roadmap — see
   triggered from a request handler — except the one guarded exception
   below.
 - `src/lib/github/dispatch.ts`, `.github/workflows/score-batch.yml`,
-  `GET /api/yc/latest-batch`, `POST /api/batches/evaluate`,
+  `GET /api/yc/batches`, `POST /api/batches/evaluate`,
   `src/components/dashboard/EvaluateBatchBanner.tsx` +
-  `EvaluationProgress.tsx` — website-triggered evaluation: a button on the
-  dashboard that scores a brand-new YC batch via GitHub Actions (real
-  scoring still can't run inside a web request — see
+  `EvaluationProgress.tsx` — website-triggered evaluation: an "Evaluate
+  this batch" action for any batch from Summer 2026 onward (real scoring
+  still can't run inside a web request — see
   docs/ARCHITECTURE.md#website-triggered-evaluation for the full
   mechanism, needed setup, and why this is a deliberately narrow
   exception to "no ingestion from a request handler," not a reversal of
-  it).
+  it). Never re-scores a company that already has a score — see
+  `runBatchPipeline`'s skip-by-default behavior below — so re-checking a
+  batch that's grown is cheap and safe, not a full re-run.
 - `src/components/dashboard/` — the batch dashboard frontend: `BatchDashboard`
   (top-level, fetches batches + selected batch detail, one combined
   ranked list by total score — see docs/ARCHITECTURE.md#categorization for
   why this replaced an earlier two-list split), `CompanyCard` (compact by
   default, lazily fetches full rubric detail on expand), `ScoreBars` (the
-  twin-axis score visual), `CategoryBadge` (still shown per card even in
-  one combined list), `BatchSwitcher`, `CompanyGrid` (the `#1, #2, …` rank
-  badge — the underlying sort, `rankCompaniesForDisplay`, lives in
+  twin-axis score visual), `CategoryBadge` (a short label like "Thesis
+  Fit" — not the full official rubric name — specifically so it can't be
+  the thing that makes one card wrap differently than another; full name
+  still available as a tooltip), `BatchSwitcher`, `CompanyGrid` (the
+  `#1, #2, …` rank badge — the underlying sort, `rankCompaniesForDisplay`, lives in
   `src/lib/db/repository.ts`). All client components calling the REST API
   via `src/lib/api/client.ts` — see docs/ARCHITECTURE.md#frontend for the
   design direction.
@@ -105,7 +123,7 @@ automation (Phase 5) is left on the original roadmap — see
 - `scripts/` — CLIs for ingestion (`ingest-batch.ts`), dry-run scoring
   without a database (`score-batch.ts`), and the full persisted pipeline
   (`run-pipeline.ts`).
-- `tests/` — 209 tests: real captured YC data and mirror fixtures
+- `tests/` — 235 tests: real captured YC data and mirror fixtures
   (`tests/fixtures/`), an in-memory fake database for storage-layer
   tests, a mocked `openai` client for scoring/chat call shapes (routed
   through OpenRouter), mocked `fetch`/`Request`/DB-client calls for the

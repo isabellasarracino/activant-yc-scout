@@ -185,10 +185,24 @@ a 62-company batch meant losing several already-scored (and already
 paid-for) companies and never attempting the rest. Each company's
 score-and-persist step is now wrapped individually; a failure is logged
 via a `"failed"` progress event and the run continues, returning
-`{processed, failed, failedCompanies}` instead of just a count. The CLI
-(`scripts/run-pipeline.ts`) prints which companies failed and why at the
-end; re-running the same command afterward is safe (upsert-based, no
-duplicates from re-scoring).
+`{processed, skipped, failed, failedCompanies}` instead of just a count.
+The CLI (`scripts/run-pipeline.ts`) prints which companies failed and why
+at the end; re-running the same command afterward retries the failed ones.
+
+**Re-running a growing batch is cheap by default, not a full re-score.**
+YC batches keep admitting companies for weeks after they're first
+announced — a batch evaluated at 4 companies might have 60 a month later.
+`runBatchPipeline` now checks which companies already have a score before
+scoring anything, and skips them (a `"skipped"` progress event, tallied
+separately from `processed`) rather than re-scoring everyone every time a
+batch is re-run. This isn't just a cost optimization: repeatedly
+re-scoring already-reviewed companies also risks silently changing a score
+someone already looked at, since the model's output isn't perfectly
+deterministic run to run. Pass `--rescore` (`force: true`) to intentionally
+re-score everyone anyway — e.g. after a rubric or thesis change that should
+propagate to existing scores. This is also what makes re-triggering
+already-evaluated batches safe to allow from the website — see
+[Website-triggered evaluation](#website-triggered-evaluation).
 
 **Not yet live-tested (again — same shape of gap, new cause):** the
 scoring logic itself was proven against real data before the provider
@@ -572,36 +586,51 @@ caller choosing to.
 ## Website-triggered evaluation
 
 A manual, on-demand cousin of Phase 5's *scheduled* automation (below):
-clicking "Evaluate this batch" on the dashboard scores a brand-new YC
-batch without anyone touching a terminal. Built per explicit user
-request, scoped deliberately narrow — just the single newest batch, not a
-full historical browser (a much bigger "any batch since 2022" feature was
+clicking "Evaluate this batch" on the dashboard scores a YC batch without
+anyone touching a terminal — for *any* batch from Summer 2026 onward, not
+just a single one, and safely re-triggerable as a batch grows over the
+following weeks. Built per explicit user request in two stages: first
+scoped to just the single newest batch, then generalized (a direct
+follow-up request) to cover every current batch with its own evaluate
+action. Deliberately still not a full "every YC batch since 2022"
+historical browser — see `EARLIEST_TRACKED_BATCH` in `src/lib/yc/mirror.ts`
+and the Decisions table in docs/PRIMER.md: that bigger feature was
 discussed and the user explicitly chose to hold off on it, precisely
-because of the setup/cost this feature already needed — see the Decisions
-table in docs/PRIMER.md).
+because of the setup/cost it would need — this is the narrower "current
+and future batches" scope they actually asked for.
 
 **Why this can't just be an API route that runs the pipeline directly**:
 scoring 150-300 companies takes far longer than a Vercel serverless
 function is allowed to run. The mechanism instead:
 
-1. `GET /api/yc/latest-batch` (`src/app/api/yc/latest-batch/route.ts`)
-   checks the YC mirror directly (not our database) for the chronologically
-   newest batch that exists anywhere, via `findLatestBatch()` in
-   `src/lib/yc/mirror.ts` — this is what lets the dashboard say "Fall 2026
-   just dropped" the moment YC starts showing companies in it, before
-   anyone has ingested anything. `findLatestBatch` parses "<Season>
-   <Year>" out of each display name rather than trusting the mirror's
-   JSON key order (undocumented) or company count (a brand-new batch
-   starts with very few companies, so "most companies" would pick the
-   wrong one — confirmed with real fixture data where "Fall 2026" had 4
-   companies against "Summer 2026"'s 54).
-2. If that batch isn't already in our database, the dashboard shows
-   `EvaluateBatchBanner` (`src/components/dashboard/EvaluateBatchBanner.tsx`).
-   Clicking it calls `POST /api/batches/evaluate`
-   (`src/app/api/batches/evaluate/route.ts`), which checks the batch isn't
-   already evaluated (409 if it is — a lightweight guard against an
-   accidental double-click or refresh triggering a second, fully
-   redundant, real-money batch run) and then calls
+1. `GET /api/yc/batches` (`src/app/api/yc/batches/route.ts`) checks the YC
+   mirror directly (not our database) for every batch at or after
+   `EARLIEST_TRACKED_BATCH` ("Summer 2026"), via `findBatchesFrom()` in
+   `src/lib/yc/mirror.ts` — this is what lets the dashboard's dropdown
+   show a batch the moment YC starts listing companies in it, before
+   anyone has ingested anything, and what lets it flag an
+   already-evaluated batch as having grown. `findBatchesFrom` (and
+   `findLatestBatch`, its single-result predecessor, still used
+   elsewhere) parses "<Season> <Year>" out of each display name rather
+   than trusting the mirror's JSON key order (undocumented) or company
+   count (a brand-new batch starts with very few companies, so "most
+   companies" would pick the wrong one — confirmed with real fixture data
+   where "Fall 2026" had 4 companies against "Summer 2026"'s 54). Each
+   batch comes back with `mirrorCompanyCount` (live), `ourCompanyCount`
+   (0 if never evaluated), `alreadyEvaluated`, and `hasNewCompanies` —
+   the dashboard doesn't need to separately compare these itself.
+2. Whichever batch is currently selected in the dropdown, if it's not yet
+   evaluated at all or has grown since it last was, the dashboard shows
+   `EvaluateBatchBanner` (`src/components/dashboard/EvaluateBatchBanner.tsx`,
+   with different copy for "never evaluated" vs. "N new companies since
+   last checked" — same button either way). Clicking it calls
+   `POST /api/batches/evaluate` (`src/app/api/batches/evaluate/route.ts`),
+   which checks whether *that specific batch* was triggered within the
+   last 5 minutes (409 if so — a lightweight guard against an accidental
+   double-click or refresh firing a redundant duplicate run, not a
+   permanent block: re-triggering an already-evaluated batch is expected
+   and safe, since `runBatchPipeline` skips already-scored companies by
+   default — see [Scoring design](#scoring-design)) and then calls
    `dispatchScoreBatchWorkflow()` (`src/lib/github/dispatch.ts`), which
    asks GitHub's REST API to run `.github/workflows/score-batch.yml` — a
    `workflow_dispatch`-triggered job that does exactly what
@@ -622,7 +651,9 @@ function is allowed to run. The mechanism instead:
    expectedCompanyCount`), not "zero unranked" — a company that
    genuinely fails to score stays in `unranked` forever (see
    [Scoring design](#scoring-design)'s pipeline-resilience story), so
-   waiting for zero would hang forever if anything failed.
+   waiting for zero would hang forever if anything failed. Once done, the
+   dashboard refreshes both `GET /api/yc/batches` (to clear the
+   "has new companies" flag) and the selected batch's detail.
 4. The "estimated time remaining" is a real, live-updating estimate
    (elapsed time so far ÷ companies scored so far × companies remaining),
    not a fixed guess — it starts from a rough placeholder
@@ -645,15 +676,16 @@ none of which overlap with Vercel's environment variables:
   environment variables.
 
 **No access control on `POST /api/batches/evaluate`** beyond the
-already-evaluated guard — anyone who can reach the deployed site can
-trigger a real, paid GitHub Actions run once per not-yet-evaluated batch.
-Acceptable for an internal tool passed around a small team; revisit
-(Vercel deployment protection, or a shared-secret check in the route)
-before this is ever exposed more broadly.
+per-batch cooldown — anyone who can reach the deployed site can trigger a
+real, paid GitHub Actions run for any current batch (rate-limited only by
+the 5-minute cooldown per batch, not blocked from re-triggering
+entirely). Acceptable for an internal tool passed around a small team;
+revisit (Vercel deployment protection, or a shared-secret check in the
+route) before this is ever exposed more broadly.
 
 **Not yet live-tested** — same as every other first run in this project:
 built and unit-tested against mocked `fetch`/database calls
-(`tests/githubDispatch.test.ts`, `tests/api/latestBatch.test.ts`,
+(`tests/githubDispatch.test.ts`, `tests/api/ycBatches.test.ts`,
 `tests/api/evaluateBatch.test.ts`, `tests/frontend/EvaluateBatchBanner.test.tsx`,
 `tests/frontend/EvaluationProgress.test.tsx`), never actually hit GitHub's
 real API. Watch on the first real click: whether the PAT's permissions are

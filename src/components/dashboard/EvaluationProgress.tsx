@@ -8,9 +8,11 @@ interface EvaluationProgressProps {
   displayName: string;
   expectedCompanyCount: number;
   onDone: () => void;
+  /** Overridable for tests, which shouldn't have to wait on a real 12-second interval to see a second poll. */
+  pollIntervalMs?: number;
 }
 
-const POLL_INTERVAL_MS = 12_000;
+const DEFAULT_POLL_INTERVAL_MS = 12_000;
 /** Before any real progress exists, a rough starting guess — replaced the moment at least one company has actually been scored, by a real observed average instead of a guess. */
 const INITIAL_MS_PER_COMPANY_ESTIMATE = 8_000;
 
@@ -25,7 +27,7 @@ const INITIAL_MS_PER_COMPANY_ESTIMATE = 8_000;
  * forever (see docs/ARCHITECTURE.md#scoring-design's pipeline-resilience
  * story), so waiting for zero would hang forever if anything failed.
  */
-export function EvaluationProgress({ batchSlug, displayName, expectedCompanyCount, onDone }: EvaluationProgressProps) {
+export function EvaluationProgress({ batchSlug, displayName, expectedCompanyCount, onDone, pollIntervalMs = DEFAULT_POLL_INTERVAL_MS }: EvaluationProgressProps) {
   const [seen, setSeen] = useState(0);
   const [scored, setScored] = useState(0);
   const [startedAt] = useState(() => Date.now());
@@ -58,7 +60,7 @@ export function EvaluationProgress({ batchSlug, displayName, expectedCompanyCoun
         void err;
       }
       if (!cancelled && !doneRef.current) {
-        timeoutId = setTimeout(poll, POLL_INTERVAL_MS);
+        timeoutId = setTimeout(poll, pollIntervalMs);
       }
     }
     poll();

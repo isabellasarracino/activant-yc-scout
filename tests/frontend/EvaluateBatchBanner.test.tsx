@@ -17,22 +17,31 @@ describe("EvaluateBatchBanner", () => {
     mockEvaluateBatch.mockReset();
   });
 
-  it("shows the batch name and company count", () => {
-    render(<EvaluateBatchBanner displayName="Fall 2026" companyCount={4} onStarted={vi.fn()} />);
-    expect(screen.getByText(/Fall 2026 just dropped/)).toBeInTheDocument();
-    expect(screen.getByText(/4 companies so far/)).toBeInTheDocument();
+  it("shows first-evaluation messaging when the batch has never been evaluated", () => {
+    render(<EvaluateBatchBanner displayName="Fall 2026" newCompanyCount={4} isFirstEvaluation onStarted={vi.fn()} />);
+    expect(screen.getByText(/Fall 2026 — 4 companies so far/)).toBeInTheDocument();
+    expect(screen.getByText("Scout hasn't looked at this batch yet.")).toBeInTheDocument();
   });
 
-  it("uses singular 'company' for a count of exactly 1", () => {
-    render(<EvaluateBatchBanner displayName="Fall 2026" companyCount={1} onStarted={vi.fn()} />);
+  it("shows refresh messaging when the batch has already been evaluated but has grown", () => {
+    render(<EvaluateBatchBanner displayName="Summer 2026" newCompanyCount={8} isFirstEvaluation={false} onStarted={vi.fn()} />);
+    expect(screen.getByText(/Summer 2026 has 8 new companies/)).toBeInTheDocument();
+    expect(screen.getByText("Since Scout last checked this batch.")).toBeInTheDocument();
+  });
+
+  it("uses singular 'company' for a count of exactly 1, in both modes", () => {
+    const { rerender } = render(<EvaluateBatchBanner displayName="Fall 2026" newCompanyCount={1} isFirstEvaluation onStarted={vi.fn()} />);
     expect(screen.getByText(/1 company so far/)).toBeInTheDocument();
+
+    rerender(<EvaluateBatchBanner displayName="Fall 2026" newCompanyCount={1} isFirstEvaluation={false} onStarted={vi.fn()} />);
+    expect(screen.getByText(/1 new company\b/)).toBeInTheDocument();
   });
 
   it("calls evaluateBatch with the display name and onStarted on success", async () => {
     mockEvaluateBatch.mockResolvedValueOnce({ ok: true, message: "Started." });
     const onStarted = vi.fn();
     const user = userEvent.setup();
-    render(<EvaluateBatchBanner displayName="Fall 2026" companyCount={4} onStarted={onStarted} />);
+    render(<EvaluateBatchBanner displayName="Fall 2026" newCompanyCount={4} isFirstEvaluation onStarted={onStarted} />);
 
     await user.click(screen.getByRole("button", { name: "Evaluate this batch" }));
 
@@ -45,7 +54,7 @@ describe("EvaluateBatchBanner", () => {
     mockEvaluateBatch.mockReturnValueOnce(new Promise((resolve) => (resolvePromise = resolve)));
     const onStarted = vi.fn();
     const user = userEvent.setup();
-    render(<EvaluateBatchBanner displayName="Fall 2026" companyCount={4} onStarted={onStarted} />);
+    render(<EvaluateBatchBanner displayName="Fall 2026" newCompanyCount={4} isFirstEvaluation onStarted={onStarted} />);
 
     await user.click(screen.getByRole("button", { name: "Evaluate this batch" }));
 
@@ -55,14 +64,14 @@ describe("EvaluateBatchBanner", () => {
   });
 
   it("shows the error message and re-enables the button on failure, without calling onStarted", async () => {
-    mockEvaluateBatch.mockRejectedValueOnce(new ApiError("already been evaluated", 409));
+    mockEvaluateBatch.mockRejectedValueOnce(new ApiError("just triggered — wait a bit", 409));
     const onStarted = vi.fn();
     const user = userEvent.setup();
-    render(<EvaluateBatchBanner displayName="Fall 2026" companyCount={4} onStarted={onStarted} />);
+    render(<EvaluateBatchBanner displayName="Fall 2026" newCompanyCount={4} isFirstEvaluation onStarted={onStarted} />);
 
     await user.click(screen.getByRole("button", { name: "Evaluate this batch" }));
 
-    await waitFor(() => expect(screen.getByText("already been evaluated")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("just triggered — wait a bit")).toBeInTheDocument());
     expect(onStarted).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Evaluate this batch" })).not.toBeDisabled();
   });

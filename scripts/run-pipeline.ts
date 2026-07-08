@@ -1,8 +1,9 @@
 /**
  * Usage:
  *   npm run db:generate                          (once — needs DATABASE_URL and real internet access)
- *   npm run pipeline -- "Summer 2026"             (whole batch)
+ *   npm run pipeline -- "Summer 2026"             (whole batch — only scores companies without a score yet)
  *   npm run pipeline -- "Summer 2026" --limit=10  (cap for a cheap smoke test)
+ *   npm run pipeline -- "Summer 2026" --rescore   (force re-score EVERYONE, even already-scored companies)
  *
  * Runs ingestion + scoring + persistence end to end against a real
  * Postgres database. Needs DATABASE_URL and OPENROUTER_API_KEY set —
@@ -11,10 +12,13 @@
  * `dotenv/config` import above, gitignored so it never gets committed) —
  * and `npm run db:generate` to have been run at least once.
  *
- * If a company fails to score, the run does NOT abort — it's logged and
- * the rest of the batch continues. Safe to re-run the same command
- * afterward; already-scored companies just get re-scored (upsert-based,
- * no duplicates), and the previously-failed ones get another attempt.
+ * Safe to re-run the same command as a batch grows over the following
+ * weeks — by default this only scores companies it hasn't seen before,
+ * so re-running doesn't re-spend on companies already scored (use
+ * --rescore to force it anyway, e.g. after a rubric change). If a
+ * company fails to score, the run does NOT abort — it's logged and the
+ * rest of the batch continues; the failed ones get another attempt next
+ * run.
  */
 import "dotenv/config";
 import { getDb } from "../src/lib/db/client";
@@ -29,11 +33,12 @@ async function main() {
   const args = process.argv.slice(2);
   const batchName = args.find((a) => !a.startsWith("--"));
   if (!batchName) {
-    console.error('Usage: npm run pipeline -- "Summer 2026" [--limit=N] [--deep-dive-bar=6.5]');
+    console.error('Usage: npm run pipeline -- "Summer 2026" [--limit=N] [--deep-dive-bar=6.5] [--rescore]');
     process.exit(1);
   }
   const limit = Number(arg("limit", args) ?? Infinity);
   const deepDiveBar = Number(arg("deep-dive-bar", args) ?? 6.5);
+  const force = args.includes("--rescore");
 
   const db = getDb();
   const thesis = await new ManualThesisProvider().getCurrentThesis();
@@ -41,6 +46,7 @@ async function main() {
   const result = await runBatchPipeline(db, batchName, thesis, {
     limit,
     deepDiveBar,
+    force,
     onProgress: (event) => {
       switch (event.type) {
         case "ingesting":
@@ -55,21 +61,29 @@ async function main() {
         case "scored":
           console.log(event.deepDived ? "scored (deep-dive)" : "scored (triage)");
           break;
+        case "skipped":
+          // Deliberately silent per-company — a mostly-already-scored
+          // batch would otherwise print one line per company for no
+          // useful reason. The final summary reports the total skipped.
+          break;
         case "failed":
           console.log(`FAILED — ${event.error}`);
           break;
         case "done":
-          console.log(`\nDone — ${event.count} companies attempted, ${event.failed} failed.`);
+          console.log(`\nDone — ${event.count} companies attempted, ${event.skipped} already scored (skipped), ${event.failed} failed.`);
           break;
       }
     },
   });
 
   console.log(`\n${result.processed} companies scored and written to the database.`);
+  if (result.skipped > 0) {
+    console.log(`${result.skipped} company/companies already had a score and were skipped (pass --rescore to force re-scoring everyone).`);
+  }
   if (result.failed > 0) {
     console.log(`${result.failed} company/companies failed to score and were skipped:`);
     for (const name of result.failedCompanies) console.log(`  - ${name}`);
-    console.log("\nRe-run the same command — already-scored companies will just be re-scored (harmless, upsert-based); the failed ones get another attempt.");
+    console.log("\nRe-run the same command — the failed ones get another attempt; already-scored companies won't be re-spent on.");
   }
 }
 

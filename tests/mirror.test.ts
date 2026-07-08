@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchBatchFromMirror, findLatestBatch, listBatches, toBatchSlug } from "../src/lib/yc/mirror";
+import { fetchBatchFromMirror, findBatchesFrom, findLatestBatch, listBatches, toBatchSlug } from "../src/lib/yc/mirror";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const loadFixture = (name: string) =>
@@ -70,6 +70,49 @@ describe("findLatestBatch", () => {
       { slug: "mystery-batch", displayName: "Something Weird", count: 10 },
     ];
     expect(findLatestBatch(batches)?.displayName).toBe("Summer 2026");
+  });
+});
+
+describe("findBatchesFrom", () => {
+  it("returns every batch at or after the cutoff, newest first, using the real mirror shape", async () => {
+    // Real fixture: Fall 2026 and Summer 2026 are >= Summer 2026.
+    // Spring 2026 and Winter 2026 came *before* Summer 2026 within the
+    // same year, so they're correctly excluded, same as Fall 2025.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, json: async () => loadFixture("meta.sample.json") }))
+    );
+    const batches = await listBatches();
+    const result = findBatchesFrom(batches, "Summer 2026");
+
+    expect(result.map((b) => b.displayName)).toEqual(["Fall 2026", "Summer 2026"]);
+  });
+
+  it("excludes a batch from an earlier year", () => {
+    const batches = [
+      { slug: "fall-2025", displayName: "Fall 2025", count: 10 },
+      { slug: "fall-2026", displayName: "Fall 2026", count: 10 },
+    ];
+    expect(findBatchesFrom(batches, "Summer 2026").map((b) => b.displayName)).toEqual(["Fall 2026"]);
+  });
+
+  it("excludes a batch from an earlier season within the same year as the cutoff", () => {
+    const batches = [
+      { slug: "winter-2026", displayName: "Winter 2026", count: 10 },
+      { slug: "spring-2026", displayName: "Spring 2026", count: 10 },
+      { slug: "summer-2026", displayName: "Summer 2026", count: 10 },
+    ];
+    expect(findBatchesFrom(batches, "Summer 2026").map((b) => b.displayName)).toEqual(["Summer 2026"]);
+  });
+
+  it("includes the cutoff batch itself (inclusive, not exclusive)", () => {
+    const batches = [{ slug: "summer-2026", displayName: "Summer 2026", count: 10 }];
+    expect(findBatchesFrom(batches, "Summer 2026")).toHaveLength(1);
+  });
+
+  it("returns an empty array rather than throwing when nothing qualifies", () => {
+    const batches = [{ slug: "fall-2025", displayName: "Fall 2025", count: 10 }];
+    expect(findBatchesFrom(batches, "Summer 2026")).toEqual([]);
   });
 });
 

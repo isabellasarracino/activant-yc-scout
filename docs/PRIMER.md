@@ -6,7 +6,7 @@
 2. Attach the project files — ideally the whole `activant-yc-scout` folder/zip, or at minimum `docs/ARCHITECTURE.md`, `docs/RUBRIC.md`, `docs/DATA_SOURCES.md`, and `prisma/schema.prisma`.
 3. Paste this whole file as your first message (or attach it alongside the code — either works).
 4. First ask: "Read the attached project, especially the docs/ folder, then tell me what you understand and confirm you're ready to continue with [whatever phase you want next]." Let it demonstrate it's actually absorbed the context before it starts writing code.
-5. Sanity check: the real repo has 17 commits and 209 passing tests as of this writing (see "Current build status" below). If a fresh `git log` or `npm test` in the new chat shows meaningfully less than that, the upload is probably incomplete — ask before assuming this primer is out of sync with the code.
+5. Sanity check: the real repo has 19 commits and 235 passing tests as of this writing (see "Current build status" below). If a fresh `git log` or `npm test` in the new chat shows meaningfully less than that, the upload is probably incomplete — ask before assuming this primer is out of sync with the code.
 
 This primer is the orientation layer — decisions, status, and conventions. The actual detail (exact rubric wording, exact data-source reasoning, exact schema) lives in the repo's own docs and should be treated as the source of truth if anything here seems to conflict with it.
 
@@ -49,7 +49,10 @@ The person building this works at Activant and wants a real, fully hosted web ap
 | Deep-dive web search | **Dropped entirely**, not replicated | Anthropic's server-side `web_search` tool (what deep-dive used for live supplementary research) has no equivalent on OpenRouter's standard endpoint. Explicit user decision, offered as one of three options (drop it / keep deep-dive on a direct Anthropic key / try OpenRouter's own web-search feature untested) — user picked "drop it." This is a real, acknowledged quality regression for the deep-dive pass specifically, not a neutral simplification — don't lose sight of that if scoring quality ever gets questioned. See docs/ARCHITECTURE.md#model-provider and #scoring-design. |
 | Dashboard company list | **One combined list, ranked by total score** (team + thesis), not two separate category lists | Explicit user decision after a full batch's worth of ranked companies existed to actually look at: two lists made it hard to compare a strong thesis-fit company against a strong team-and-general one at a glance. `CategoryBadge` (which axis is primary) still shows per card — this changed display grouping, not categorization itself. `rankCompaniesForDisplay` (renamed from `categorizeForDisplay`) in `src/lib/db/repository.ts`; `GET /api/batches/[batch]` now returns `{ ranked, unranked }`. Chat's `list_top_companies` "any" ranking was updated to match (combined score, not max-of-two) for consistency between dashboard and chat answers. See docs/ARCHITECTURE.md#categorization. |
 | Unranked messaging | Explicit reason shown ("Scout hasn't been able to look into these companies yet"), not a bare list | Direct user request: "if it must be unranked, it should be denoted that the scout was unable to look into the company." Since the qualifying-bar removal, "unranked" only ever means "no CompanyScore row yet" (not-yet-scored or failed), so one honest, generic explanation covers every real case without needing to track/display a specific per-company failure reason (that's a possible future enhancement, not done — would need a schema field to persist why a company failed). |
-| Website-triggered evaluation | **Built**, scoped narrowly to just the single newest batch | Direct user request: "we need to add that feature... run the most recent batch [from the website]." This is the same underlying mechanism (GitHub Actions dispatch) as the full "browse any batch since 2022" feature the user explicitly declined minutes earlier — the difference is scope (one batch vs. ~10 years of backfill) and the cost concern didn't apply here (just the normal cost of scoring one new batch either way). Flagged this overlap to the user explicitly before building; they confirmed they wanted it. See docs/ARCHITECTURE.md#website-triggered-evaluation. Needs new setup: a GitHub PAT (`GITHUB_TOKEN`/`GITHUB_REPOSITORY` in Vercel) plus `DATABASE_URL`/`OPENROUTER_API_KEY` added *again* as separate GitHub Actions repository secrets. |
+| Website-triggered evaluation | **Built, then generalized** from "just the single newest batch" to "every batch from Summer 2026 onward, each with its own evaluate action" | First built narrow per explicit user request. User then asked for it to cover every batch since Summer 2026 (not the full 2022+ history they'd separately declined), with a per-batch button and safe re-triggering as any batch grows. `EARLIEST_TRACKED_BATCH` in `src/lib/yc/mirror.ts` is the one place this scope is defined. `GET /api/yc/latest-batch` was fully replaced by `GET /api/yc/batches` (plural) — don't look for the old endpoint, it's gone, not deprecated-but-kept. See docs/ARCHITECTURE.md#website-triggered-evaluation. |
+| Scoring resilience, round 2 | **Retry + deep-dive fallback**, not just "log and skip" | Direct user request: "when evaluating any company, they should all work on the first try... there should be no unranked companies... the user shouldn't have to run a batch multiple times." A failed triage call now retries once, then falls back to a full deep-dive attempt (a differently-shaped call that might succeed where triage didn't); if deep-dive is the one that fails after triage already succeeded, the good triage score is used rather than nothing. `src/lib/retry.ts` is the shared retry helper. The only way a company still ends up unranked is if *both* triage and deep-dive fail even after retries — an honest limit (a truly broken API can't be retried around), not a gap left unaddressed. See docs/ARCHITECTURE.md#scoring-design. |
+| Category badge sizing | Short labels ("Team & General" / "Thesis Fit"), not the full official rubric names, on the card itself | Direct user request: "the team&general interest flag needs to be made smaller so that all of the cards on the website are the same size." The full names differed enough in length to wrap the badge/score row differently depending on which category a card landed in, making otherwise-identical cards render at inconsistent heights. Full names preserved as a `title` tooltip, not dropped entirely. |
+| Re-running a growing batch | **Skips already-scored companies by default** (`force`/`--rescore` to override); website re-trigger guard changed from a permanent block to a 5-minute cooldown | Direct user question: "as the batch grows... will Scout look at the additional companies?" Previously, re-running would re-score *everyone*, wasting API cost and risking silently changing an already-reviewed score (models aren't perfectly deterministic run to run). See docs/ARCHITECTURE.md#scoring-design. ~~Known remaining gap~~ **resolved in the very next request**: the user asked for (and got) a per-batch evaluate/refresh UI — see the "Website-triggered evaluation" row above. |
 
 ## Current build status
 
@@ -66,12 +69,13 @@ Repo name: `activant-yc-scout`. Tests genuinely passing at each commit (not just
 | 4b | Frontend — chat UI | Done |
 | 5 | Automation — GitHub Actions cron, deployment docs, historical backfill | **Not started — natural next step** |
 
-**209 tests passing, `tsc --noEmit` clean, `next build` succeeds**, as of the last commit. Full file map:
+**235 tests passing, `tsc --noEmit` clean, `next build` succeeds**, as of the last commit. Full file map:
 
 ```
 src/lib/ai/          openrouter.ts (shared client + forced-tool-call helper — everything routes through this now except mcpProvider.ts)
 src/lib/yc/          mirror.ts, companyPage.ts, companyWebsite.ts, ingest.ts, types.ts
 src/lib/scoring/     rubric.ts, scoreTool.ts, triage.ts, deepDive.ts, categorize.ts, format.ts, types.ts
+src/lib/retry.ts     withRetries() — shared retry helper, used by the pipeline's triage/deep-dive fallback logic
 src/lib/thesis/      types.ts, manualProvider.ts, mcpProvider.ts (still direct-Anthropic, inactive)
 src/lib/db/          types.ts, prismaLike.ts, repository.ts, client.ts
 src/lib/pipeline/    runBatchPipeline.ts
@@ -80,13 +84,13 @@ src/lib/api/         serialize.ts, client.ts
 src/components/dashboard/  BatchDashboard.tsx, BatchSwitcher.tsx, CompanyCard.tsx, CompanyGrid.tsx, ScoreBars.tsx, CategoryBadge.tsx, EvaluateBatchBanner.tsx, EvaluationProgress.tsx
 src/components/chat/       ChatPanel.tsx
 src/lib/github/       dispatch.ts (GitHub Actions workflow-dispatch helper, for website-triggered evaluation)
-src/app/             globals.css, layout.tsx, page.tsx, chat/page.tsx, api/batches/route.ts, api/batches/[batch]/route.ts, api/companies/[slug]/route.ts, api/chat/route.ts, api/yc/latest-batch/route.ts, api/batches/evaluate/route.ts
+src/app/             globals.css, layout.tsx, page.tsx, chat/page.tsx, api/batches/route.ts, api/batches/[batch]/route.ts, api/companies/[slug]/route.ts, api/chat/route.ts, api/yc/batches/route.ts, api/batches/evaluate/route.ts
 .github/workflows/   score-batch.yml (runs the pipeline on GitHub Actions — manual dispatch or website-triggered)
 src/lib/http.ts      (shared fetch-with-timeout / HTML-cleaning helpers)
 scripts/             ingest-batch.ts, score-batch.ts, run-pipeline.ts
 prisma/schema.prisma
 docs/                ARCHITECTURE.md, RUBRIC.md, DATA_SOURCES.md, PRIMER.md, thesis/current.md
-tests/               32 files, 209 tests — tests/fixtures/ has real captured YC data + an in-memory fake DB; tests/api/ exercises route handlers directly; tests/frontend/ uses React Testing Library + jsdom for every dashboard + chat component (no real browser available in this sandbox — see Known gaps)
+tests/               33 files, 235 tests — tests/fixtures/ has real captured YC data + an in-memory fake DB; tests/api/ exercises route handlers directly; tests/frontend/ uses React Testing Library + jsdom for every dashboard + chat component (no real browser available in this sandbox — see Known gaps)
 ```
 
 **Rubric, compactly** (full dimension descriptions + anchors in `docs/RUBRIC.md`):
@@ -117,7 +121,9 @@ verified now" for anything AI-call-related.
 6. **REST API routes** (`src/app/api/`) — **resolved and verified live**, unaffected by the OpenRouter switch except `/api/chat`, which inherits gap #5 above (the route itself just calls `answerChatQuestion`, no independent risk).
 7. **Frontend** (`src/components/dashboard/`, `src/components/chat/`) — **substantially verified live** for the dashboard (real scored companies rendered correctly in a real browser at the live URL); the chat page's *rendering* is confirmed but a real answer flowing through it end-to-end isn't, pending gap #5. Separately, no headless browser exists in the sandbox this was built in, so component-level testing is React Testing Library + jsdom, not literally a rendered browser — still true, unrelated to the provider switch.
 8. **Pipeline resilience** (`runBatchPipeline.ts` catching per-company failures, `scoreTool.ts`'s malformed-input validation, `triage.ts`/`deepDive.ts`'s truncated-response guards) — the happy-path reporting is confirmed live (the real `--limit=3` run correctly printed "Done — 3 companies attempted, 0 failed"). The actual failure-handling path (a company genuinely failing and the run continuing past it) hasn't been observed live since the OpenRouter switch — the original incident and the fix's tests both predate it. Still provider-agnostic in principle.
-9. **Website-triggered evaluation** (`src/lib/github/dispatch.ts`, `.github/workflows/score-batch.yml`, `GET /api/yc/latest-batch`, `POST /api/batches/evaluate`, `EvaluateBatchBanner`, `EvaluationProgress`) — built per direct user request, entirely unverified against the real GitHub API (mocked `fetch` in tests only). Specific things to check on first real use: whether the GitHub PAT's permissions are sufficient, whether the workflow file is actually found on the deployed repo's default branch (the `ref: "main"` in `dispatch.ts` needs to match — if the repo's default branch is actually called something else, this needs updating), and whether `findLatestBatch()`'s season-name parsing holds up against whatever the mirror actually calls future batches (tested against real fixture data showing Winter/Spring/Summer/Fall, but a genuinely novel season name would fall back to "unparseable = oldest," silently failing to detect a new batch rather than crashing — worth knowing about even though it's a safe failure mode).
+9. **Website-triggered evaluation** (`src/lib/github/dispatch.ts`, `.github/workflows/score-batch.yml`, `GET /api/yc/batches`, `POST /api/batches/evaluate`, `EvaluateBatchBanner`, `EvaluationProgress`) — built per direct user request, entirely unverified against the real GitHub API (mocked `fetch` in tests only). Specific things to check on first real use: whether the GitHub PAT's permissions are sufficient, whether the workflow file is actually found on the deployed repo's default branch (the `ref: "main"` in `dispatch.ts` needs to match — if the repo's default branch is actually called something else, this needs updating), and whether `findBatchesFrom()`/`findLatestBatch()`'s season-name parsing holds up against whatever the mirror actually calls future batches (tested against real fixture data showing Winter/Spring/Summer/Fall, but a genuinely novel season name would fall back to "unparseable = oldest," silently failing to detect a new batch rather than crashing — worth knowing about even though it's a safe failure mode). The endpoint was renamed from `GET /api/yc/latest-batch` (deleted, not deprecated) to `GET /api/yc/batches` when this was generalized to cover every batch from Summer 2026 onward, each with its own evaluate/refresh action — the earlier "no re-check UI" gap noted in the Decisions table is resolved.
+10. **Skip-already-scored pipeline behavior** (`runBatchPipeline`'s default skip logic, `POST /api/batches/evaluate`'s 5-minute cooldown replacing the old permanent block) — unit-tested thoroughly (15 tests in `tests/pipeline.test.ts` covering skip/force/mixed-new-and-old scenarios), but not yet exercised against a real growing batch. Worth confirming on the next real Summer 2026 re-run: that already-scored companies are genuinely skipped (check the CLI's "N already had a score and were skipped" summary line) and that any new companies since the last run get scored normally.
+11. **Retry + deep-dive fallback resilience** (`src/lib/retry.ts`, `runBatchPipeline`'s `scoreAndPersistOne`) — unit-tested thoroughly (dedicated tests for: triage retries once and succeeds, triage fails entirely and deep-dive recovers, deep-dive fails and the existing triage score is used instead, both fail and the company is genuinely marked failed) but never exercised against a real flaky/failing OpenRouter response — the original incident this all traces back to (a malformed `record_score` call) happened on direct Anthropic, before the provider switch. Worth watching on a large real batch run: whether retries actually help in practice against OpenRouter's specific failure modes, and whether the "no unranked companies" goal holds up for real, not just in mocked tests.
 
 ## What the user still needs to do (not blocking, but real)
 
@@ -130,27 +136,28 @@ verified now" for anything AI-call-related.
 - Confirm chat works with a real question against OpenRouter — still open (see Known Gap #5).
 - Find out whether the Activant Research MCP connector issues a standalone API credential — still open, not blocking.
 
-## Recommended next step: verify the two newest unverified pieces, then Phase 5
+## Recommended next step: verify what's newly unverified, then Phase 5
 
-Two things built in this session have never touched the real world:
+Several things built across this session have never touched the real world:
 1. **Chat with a real question** — the scoring path is confirmed live; chat isn't yet.
-2. **Website-triggered evaluation** ("Evaluate this batch" button) — needs the GitHub PAT setup above before it can even be tried, then a real click-through to confirm the whole GitHub Actions dispatch → polling → progress bar → completion loop actually works end to end.
+2. **Website-triggered evaluation** ("Evaluate this batch" button, now generalized to every batch from Summer 2026 onward with its own evaluate/refresh action) — the user has confirmed the GitHub PAT + repository secrets are set up correctly (they reported all setup steps worked); what hasn't happened yet is an actual click-through to confirm the whole GitHub Actions dispatch → polling → progress bar → completion loop works end to end for real, for both a first-time evaluation and a refresh of a grown batch.
+3. **The retry + deep-dive fallback resilience** (`src/lib/retry.ts`, `runBatchPipeline`) — thoroughly unit-tested, never watched handle a real flaky OpenRouter response.
 
-Only after both of those are confirmed does Phase 5 (scheduled automation)
-make sense — it would reuse the same GitHub Actions secrets and very
-likely the same `dispatchScoreBatchWorkflow`/workflow file, just triggered
-by a `schedule` instead of a button click. Building that before the
-on-demand version has been watched working once would mean automating
-something unverified.
+Only after these are confirmed does Phase 5 (scheduled automation) make
+sense — it would reuse the same GitHub Actions secrets and very likely the
+same `dispatchScoreBatchWorkflow`/workflow file, just triggered by a
+`schedule` instead of a button click. Building that before the on-demand
+version has been watched working once would mean automating something
+unverified.
 
 The user also asked about a bigger feature — picking any historical YC
 batch (2022+) from the dropdown — and explicitly chose to hold off on it
-after hearing the real scope (a full historical browser, not just the
-newest batch, with real one-time cost to backfill ~1,500-2,000 historical
+after hearing the real scope (a full historical browser, not just current
+batches, with real one-time cost to backfill ~1,500-2,000 historical
 companies). **That's still declined, not built** — the website-triggered
-evaluation feature that did get built is deliberately narrower (just the
-single newest batch). Don't conflate the two or assume the bigger one
-snuck in as part of this work.
+evaluation feature that did get built is deliberately narrower (Summer
+2026 onward only, per `EARLIEST_TRACKED_BATCH`). Don't conflate the two or
+assume the bigger one snuck in as part of this work.
 
 
 

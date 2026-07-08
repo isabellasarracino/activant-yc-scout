@@ -50,15 +50,18 @@ export async function fetchCompanyDetail(slug: string): Promise<CompanyFullDTO> 
   return getJson<CompanyFullDTO>(`/api/companies/${encodeURIComponent(slug)}`);
 }
 
-export interface LatestYcBatch {
+export interface YcBatchInfo {
   slug: string;
   displayName: string;
-  companyCount: number;
+  mirrorCompanyCount: number;
+  ourCompanyCount: number;
   alreadyEvaluated: boolean;
+  hasNewCompanies: boolean;
 }
 
-export async function fetchLatestYcBatch(): Promise<LatestYcBatch> {
-  return getJson<LatestYcBatch>("/api/yc/latest-batch");
+export async function fetchYcBatches(): Promise<YcBatchInfo[]> {
+  const { batches } = await getJson<{ batches: YcBatchInfo[] }>("/api/yc/batches");
+  return batches;
 }
 
 export async function evaluateBatch(batchName: string): Promise<{ ok: boolean; message: string }> {

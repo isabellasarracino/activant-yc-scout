@@ -9,19 +9,27 @@ const EvaluateRequestSchema = z.object({
   batchName: z.string().trim().min(1, "batchName is required"),
 });
 
+const RETRIGGER_COOLDOWN_MS = 5 * 60 * 1000;
+
 /**
- * Starts evaluating a YC batch that hasn't been scored yet, by asking
- * GitHub Actions to run the pipeline (see
- * src/lib/github/dispatch.ts and .github/workflows/score-batch.yml) —
- * this endpoint itself does no scoring and returns almost immediately;
- * the actual work happens on GitHub's infrastructure over the following
- * minutes. The frontend tracks progress by polling
- * GET /api/batches/[batch], not by asking this endpoint about status.
+ * Starts (or re-starts) evaluating a YC batch by asking GitHub Actions to
+ * run the pipeline (see src/lib/github/dispatch.ts and
+ * .github/workflows/score-batch.yml) — this endpoint itself does no
+ * scoring and returns almost immediately; the actual work happens on
+ * GitHub's infrastructure over the following minutes. The frontend
+ * tracks progress by polling GET /api/batches/[batch], not by asking
+ * this endpoint about status.
  *
- * Guards against re-triggering a batch that's already been evaluated —
- * not for correctness (re-running is harmless, upsert-based) but to stop
- * an accidental double-click or page refresh from kicking off a second,
- * fully redundant, real-money batch run.
+ * Re-triggering an already-evaluated batch is allowed and expected — YC
+ * batches keep admitting companies for weeks, and `runBatchPipeline`
+ * skips already-scored companies by default (see its doc comment), so a
+ * re-run only pays for genuinely new companies. What's guarded against is
+ * a *rapid* re-trigger (accidental double-click, page refresh) firing a
+ * second, likely-redundant GitHub Actions run before the first one could
+ * possibly have finished ingesting — a 5-minute cooldown keyed on the
+ * batch's lastSyncedAt (set the moment a run starts ingesting, before any
+ * scoring) catches that case without blocking a legitimate re-check days
+ * or weeks later.
  *
  * No other access control on this endpoint — anyone who can reach the
  * site can trigger a real, paid GitHub Actions run. Acceptable for an
@@ -47,14 +55,19 @@ export async function POST(request: Request) {
   try {
     const db = getDb();
     const ourBatches = await listBatchesFromDb(db);
-    if (ourBatches.some((b) => b.id === slug)) {
-      return NextResponse.json(
-        { error: `"${batchName}" has already been evaluated. Re-run it directly from a terminal if you want to refresh it.` },
-        { status: 409 }
-      );
+    const existing = ourBatches.find((b) => b.id === slug);
+    if (existing) {
+      const msSinceLastSync = Date.now() - existing.lastSyncedAt.getTime();
+      if (msSinceLastSync < RETRIGGER_COOLDOWN_MS) {
+        const secondsLeft = Math.ceil((RETRIGGER_COOLDOWN_MS - msSinceLastSync) / 1000);
+        return NextResponse.json(
+          { error: `"${batchName}" was just triggered — wait about ${secondsLeft}s before trying again (this guards against an accidental double-trigger, not against re-checking a batch that's grown).` },
+          { status: 409 }
+        );
+      }
     }
   } catch (err) {
-    return NextResponse.json({ error: err instanceof Error ? err.message : "Could not check whether this batch was already evaluated." }, { status: 500 });
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Could not check this batch's status." }, { status: 500 });
   }
 
   try {

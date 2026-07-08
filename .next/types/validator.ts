@@ -110,6 +110,15 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
   type __Unused = __Check
 }
 
+// Validate ../../src/app/api/yc/batches/route.ts
+{
+  type __IsExpected<Specific extends RouteHandlerConfig<"/api/yc/batches">> = Specific
+  const handler = {} as typeof import("../../src/app/api/yc/batches/route.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
 // Validate ../../src/app/api/yc/latest-batch/route.ts
 {
   type __IsExpected<Specific extends RouteHandlerConfig<"/api/yc/latest-batch">> = Specific

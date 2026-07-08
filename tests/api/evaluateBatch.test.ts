@@ -34,15 +34,33 @@ describe("POST /api/batches/evaluate", () => {
     expect(mockDispatch).toHaveBeenCalledWith("Fall 2026");
   });
 
-  it("refuses to re-trigger a batch that's already been evaluated, without calling GitHub", async () => {
-    await upsertBatch(db, "Summer 2026", 54);
+  it("refuses to re-trigger a batch within the cooldown window (guards against an accidental double-click)", async () => {
+    await upsertBatch(db, "Summer 2026", 54); // lastSyncedAt = now
 
     const response = await POST(jsonRequest({ batchName: "Summer 2026" }));
     const body = await response.json();
 
     expect(response.status).toBe(409);
-    expect(body.error).toMatch(/already been evaluated/);
+    expect(body.error).toMatch(/just triggered/);
     expect(mockDispatch).not.toHaveBeenCalled();
+  });
+
+  it("allows re-triggering an already-evaluated batch once the cooldown has passed — re-checking a grown batch is expected, not blocked", async () => {
+    const batch = await upsertBatch(db, "Winter 2027", 10);
+    // Simulate this batch having been evaluated a while ago, not "just now".
+    await db.batch.upsert({
+      where: { id: batch.id },
+      create: { id: batch.id, displayName: batch.displayName, companyCount: batch.companyCount },
+      update: { displayName: batch.displayName, companyCount: batch.companyCount, lastSyncedAt: new Date(Date.now() - 10 * 60 * 1000) },
+    });
+    mockDispatch.mockResolvedValueOnce(undefined);
+
+    const response = await POST(jsonRequest({ batchName: "Winter 2027" }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(mockDispatch).toHaveBeenCalledWith("Winter 2027");
   });
 
   it("returns 400 for a missing batchName", async () => {

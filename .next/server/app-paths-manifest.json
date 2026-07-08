@@ -5,6 +5,7 @@
   "/api/batches/route": "app/api/batches/route.js",
   "/api/chat/route": "app/api/chat/route.js",
   "/api/companies/[slug]/route": "app/api/companies/[slug]/route.js",
+  "/api/yc/batches/route": "app/api/yc/batches/route.js",
   "/api/yc/latest-batch/route": "app/api/yc/latest-batch/route.js",
   "/chat/page": "app/chat/page.js",
   "/page": "app/page.js"

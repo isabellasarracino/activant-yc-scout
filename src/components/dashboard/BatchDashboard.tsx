@@ -1,14 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { BatchDTO } from "../../lib/api/serialize";
 import {
   fetchBatchDetail,
-  fetchBatches,
-  fetchLatestYcBatch,
+  fetchYcBatches,
   ApiError,
   type BatchDetailResponse,
-  type LatestYcBatch,
+  type YcBatchInfo,
 } from "../../lib/api/client";
 import { BatchSwitcher } from "./BatchSwitcher";
 import { CompanyGrid } from "./CompanyGrid";
@@ -36,183 +34,167 @@ function friendlyError(message: string): string {
 }
 
 /**
- * Home page's main content. Defaults to the most recently synced batch —
- * `GET /api/batches` already comes back ordered newest-first
- * (`listBatchesFromDb`'s `orderBy: lastSyncedAt desc`), so "the batch
- * that's currently in progress" is just index 0, no separate "latest"
- * endpoint needed for *browsing*. Switching batches re-fetches detail
- * client-side; there's no separate "history" mode (docs/ARCHITECTURE.md#chat--qa
- * makes the same point for chat) — an old batch renders exactly the same
- * way a new one does.
+ * Home page's main content. The dropdown (BatchSwitcher) is driven by
+ * GET /api/yc/batches — every batch from Summer 2026 onward, whether or
+ * not we've evaluated it — not by our own database's batch list, so a
+ * batch YC just announced shows up immediately, labeled "not yet
+ * evaluated," rather than only appearing once someone has already run
+ * the pipeline for it. See docs/ARCHITECTURE.md#website-triggered-evaluation.
  *
- * Separately, this also checks whether YC has a *newer* batch than
- * anything in our database at all (GET /api/yc/latest-batch) and, if so,
- * shows a banner offering to evaluate it — independent of whatever batch
- * is currently selected for browsing below. See
- * docs/ARCHITECTURE.md#website-triggered-evaluation.
+ * Selecting a batch that hasn't been evaluated (or that's grown since it
+ * was last evaluated) shows EvaluateBatchBanner instead of / above the
+ * normal ranked list; clicking it triggers the same on-demand GitHub
+ * Actions flow for whichever batch is currently selected, not just "the
+ * single newest batch ever" — every batch gets its own evaluate action.
  */
 export function BatchDashboard() {
-  const [batchesState, setBatchesState] = useState<LoadState>("loading");
-  const [batches, setBatches] = useState<BatchDTO[]>([]);
-  const [batchesError, setBatchesError] = useState<string | null>(null);
+  const [ycBatchesState, setYcBatchesState] = useState<LoadState>("loading");
+  const [ycBatches, setYcBatches] = useState<YcBatchInfo[]>([]);
+  const [ycBatchesError, setYcBatchesError] = useState<string | null>(null);
 
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
   const [detailState, setDetailState] = useState<LoadState>("loading");
   const [detail, setDetail] = useState<BatchDetailResponse | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
 
-  const [latestYc, setLatestYc] = useState<LatestYcBatch | null>(null);
-  const [evaluating, setEvaluating] = useState<{ slug: string; displayName: string; companyCount: number } | null>(null);
+  const [evaluating, setEvaluating] = useState<{ slug: string; displayName: string; targetCompanyCount: number } | null>(null);
 
-  const loadBatches = useCallback((selectNewest: boolean) => {
-    fetchBatches()
+  const loadYcBatches = useCallback((selectDefault: boolean) => {
+    fetchYcBatches()
       .then((list) => {
-        setBatches(list);
-        setBatchesState("ready");
-        if (selectNewest && list.length > 0) setSelectedBatchId(list[0]!.id);
+        setYcBatches(list);
+        setYcBatchesState("ready");
+        if (selectDefault && list.length > 0) {
+          const preferred = list.find((b) => b.alreadyEvaluated) ?? list[0]!;
+          setSelectedBatchId(preferred.slug);
+        }
       })
       .catch((err) => {
-        setBatchesError(friendlyError(err instanceof ApiError ? err.message : "Couldn't load batches."));
-        setBatchesState("error");
+        setYcBatchesError(friendlyError(err instanceof ApiError ? err.message : "Couldn't load batches."));
+        setYcBatchesState("error");
       });
   }, []);
 
-  useEffect(() => {
-    loadBatches(true);
-    fetchLatestYcBatch()
-      .then(setLatestYc)
-      .catch(() => {
-        // Non-critical: if the mirror is unreachable or misconfigured,
-        // just skip the "new batch available" banner rather than
-        // surfacing a second error state on top of the main one.
-      });
-  }, [loadBatches]);
-
-  useEffect(() => {
-    if (!selectedBatchId) return;
-    let cancelled = false;
+  const loadDetail = useCallback((batchId: string) => {
     setDetailState("loading");
     setDetailError(null);
-    fetchBatchDetail(selectedBatchId)
+    fetchBatchDetail(batchId)
       .then((d) => {
-        if (cancelled) return;
         setDetail(d);
         setDetailState("ready");
       })
       .catch((err) => {
-        if (cancelled) return;
-        setDetailError(friendlyError(err instanceof ApiError ? err.message : "Couldn't load this batch."));
-        setDetailState("error");
+        if (err instanceof ApiError && err.status === 404) {
+          // Not an error — this batch just hasn't been evaluated yet.
+          setDetail(null);
+          setDetailState("ready");
+        } else {
+          setDetailError(friendlyError(err instanceof ApiError ? err.message : "Couldn't load this batch."));
+          setDetailState("error");
+        }
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedBatchId]);
+  }, []);
+
+  useEffect(() => {
+    loadYcBatches(true);
+  }, [loadYcBatches]);
+
+  useEffect(() => {
+    if (selectedBatchId) loadDetail(selectedBatchId);
+  }, [selectedBatchId, loadDetail]);
 
   function handleEvaluationStarted() {
-    if (!latestYc) return;
-    setEvaluating({ slug: latestYc.slug, displayName: latestYc.displayName, companyCount: latestYc.companyCount });
+    const selected = ycBatches.find((b) => b.slug === selectedBatchId);
+    if (!selected) return;
+    setEvaluating({ slug: selected.slug, displayName: selected.displayName, targetCompanyCount: selected.mirrorCompanyCount });
   }
 
   function handleEvaluationDone() {
     const finishedSlug = evaluating?.slug ?? null;
     setEvaluating(null);
-    loadBatches(false);
-    if (finishedSlug) setSelectedBatchId(finishedSlug);
-    fetchLatestYcBatch().then(setLatestYc).catch(() => {});
+    loadYcBatches(false);
+    if (finishedSlug) loadDetail(finishedSlug);
   }
 
-  const showNewBatchBanner = latestYc && !latestYc.alreadyEvaluated && !evaluating;
-
-  if (batchesState === "loading") {
+  if (ycBatchesState === "loading") {
     return <p style={{ color: "var(--ink-muted)", fontSize: 14 }}>Loading batches…</p>;
   }
 
-  if (batchesState === "error") {
-    return <p style={{ color: "var(--danger)", fontSize: 14 }}>{batchesError}</p>;
+  if (ycBatchesState === "error") {
+    return <p style={{ color: "var(--danger)", fontSize: 14 }}>{ycBatchesError}</p>;
   }
+
+  if (ycBatches.length === 0) {
+    return <p style={{ color: "var(--ink-muted)", fontSize: 14 }}>No YC batches found from Summer 2026 onward.</p>;
+  }
+
+  const selectedYcInfo = ycBatches.find((b) => b.slug === selectedBatchId);
+  const newCompanyCount = selectedYcInfo ? selectedYcInfo.mirrorCompanyCount - selectedYcInfo.ourCompanyCount : 0;
+  const showBanner = !evaluating && selectedYcInfo && newCompanyCount > 0;
 
   return (
     <div>
-      {showNewBatchBanner && (
-        <EvaluateBatchBanner displayName={latestYc.displayName} companyCount={latestYc.companyCount} onStarted={handleEvaluationStarted} />
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <p style={{ margin: 0, fontSize: 12, color: "var(--ink-muted)" }}>
+            {detail ? `Last synced ${new Date(detail.batch.lastSyncedAt).toLocaleString()}` : "\u00A0"}
+          </p>
+        </div>
+        {selectedBatchId && <BatchSwitcher batches={ycBatches} selectedBatchId={selectedBatchId} onChange={setSelectedBatchId} />}
+      </div>
+
+      {showBanner && selectedYcInfo && (
+        <EvaluateBatchBanner
+          displayName={selectedYcInfo.displayName}
+          newCompanyCount={newCompanyCount}
+          isFirstEvaluation={!selectedYcInfo.alreadyEvaluated}
+          onStarted={handleEvaluationStarted}
+        />
       )}
+
       {evaluating && (
         <EvaluationProgress
           batchSlug={evaluating.slug}
           displayName={evaluating.displayName}
-          expectedCompanyCount={evaluating.companyCount}
+          expectedCompanyCount={evaluating.targetCompanyCount}
           onDone={handleEvaluationDone}
         />
       )}
 
-      {batches.length === 0 && !evaluating && (
-        <div style={{ maxWidth: 480 }}>
-          <p style={{ fontSize: 14, color: "var(--ink)" }}>No batches evaluated yet.</p>
-          <p style={{ fontSize: 13, color: "var(--ink-muted)" }}>
-            {showNewBatchBanner
-              ? "Use the banner above, or run this from a terminal:"
-              : "Run the pipeline once a database and OpenRouter API key are configured:"}
-          </p>
-          <pre
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 12,
-              background: "var(--surface)",
-              border: "1px solid var(--line)",
-              borderRadius: 6,
-              padding: 12,
-              overflowX: "auto",
-            }}
-          >
-            npm run pipeline -- &quot;Summer 2026&quot; --limit=10
-          </pre>
-        </div>
+      {!evaluating && detailState === "loading" && <p style={{ color: "var(--ink-muted)", fontSize: 14 }}>Loading companies…</p>}
+      {!evaluating && detailState === "error" && <p style={{ color: "var(--danger)", fontSize: 14 }}>{detailError}</p>}
+
+      {!evaluating && detailState === "ready" && detail === null && !showBanner && (
+        <p style={{ color: "var(--ink-muted)", fontSize: 14 }}>This batch hasn&apos;t been evaluated yet.</p>
       )}
 
-      {batches.length > 0 && (
+      {!evaluating && detail && detailState === "ready" && (
         <>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
-            <div>
-              <p style={{ margin: 0, fontSize: 12, color: "var(--ink-muted)" }}>
-                {detail ? `Last synced ${new Date(detail.batch.lastSyncedAt).toLocaleString()}` : "\u00A0"}
+          <CompanyGrid
+            title="All Companies"
+            accent="var(--ink)"
+            companies={detail.ranked}
+            emptyMessage="No companies have been scored yet."
+            rank
+          />
+          {detail.unranked.length > 0 && (
+            <details>
+              <summary
+                style={{
+                  cursor: "pointer",
+                  fontFamily: "var(--font-body)",
+                  fontSize: 13,
+                  color: "var(--ink-muted)",
+                  marginBottom: 12,
+                }}
+              >
+                {detail.unranked.length} not yet evaluated
+              </summary>
+              <p style={{ fontSize: 12.5, color: "var(--ink-muted)", margin: "0 0 12px", fontStyle: "italic" }}>
+                Scout hasn&apos;t been able to look into these companies yet — they&apos;re ingested but not scored.
               </p>
-            </div>
-            {selectedBatchId && <BatchSwitcher batches={batches} selectedBatchId={selectedBatchId} onChange={setSelectedBatchId} />}
-          </div>
-
-          {detailState === "loading" && <p style={{ color: "var(--ink-muted)", fontSize: 14 }}>Loading companies…</p>}
-          {detailState === "error" && <p style={{ color: "var(--danger)", fontSize: 14 }}>{detailError}</p>}
-
-          {detail && detailState === "ready" && (
-            <>
-              <CompanyGrid
-                title="All Companies"
-                accent="var(--ink)"
-                companies={detail.ranked}
-                emptyMessage="No companies have been scored yet."
-                rank
-              />
-              {detail.unranked.length > 0 && (
-                <details>
-                  <summary
-                    style={{
-                      cursor: "pointer",
-                      fontFamily: "var(--font-body)",
-                      fontSize: 13,
-                      color: "var(--ink-muted)",
-                      marginBottom: 12,
-                    }}
-                  >
-                    {detail.unranked.length} not yet evaluated
-                  </summary>
-                  <p style={{ fontSize: 12.5, color: "var(--ink-muted)", margin: "0 0 12px", fontStyle: "italic" }}>
-                    Scout hasn&apos;t been able to look into these companies yet — they&apos;re ingested but not scored.
-                  </p>
-                  <CompanyGrid title="Not yet evaluated" accent="var(--line)" companies={detail.unranked} emptyMessage="" />
-                </details>
-              )}
-            </>
+              <CompanyGrid title="Not yet evaluated" accent="var(--line)" companies={detail.unranked} emptyMessage="" />
+            </details>
           )}
         </>
       )}
